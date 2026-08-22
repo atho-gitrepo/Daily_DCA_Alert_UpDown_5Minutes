@@ -1,5 +1,13 @@
+[phases.setup]
+nixPkgs = ["python3", "python3Packages.pip", "gcc", "g++", "python3Packages.numpy", "python3Packages.scipy"]
+
 [phases.install]
-cmds = ["python -m pip install --upgrade pip", "pip install -r requirements.txt"]
+cmds = [
+    "python -m pip install --upgrade pip",
+    "pip install numpy",
+    "pip install scipy",
+    "pip install -r requirements.txt"
+]
 
 [start]
 cmd = "python main.py"

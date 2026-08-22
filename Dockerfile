@@ -2,17 +2,32 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# ============================================================
+# ✅ Install system dependencies for scipy and numpy
+# ============================================================
 RUN apt-get update && apt-get install -y \
     gcc \
+    g++ \
+    build-essential \
+    python3-dev \
+    libatlas-base-dev \
+    libblas-dev \
+    liblapack-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# ============================================================
 # Copy requirements and install
+# ============================================================
 COPY requirements.txt .
-RUN pip install redis
+
+# ✅ Install scipy first (it's the largest, install separately for cache)
+RUN pip install --no-cache-dir numpy
+RUN pip install --no-cache-dir scipy
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ============================================================
 # Copy application code
+# ============================================================
 COPY . .
 
 # Create directories
