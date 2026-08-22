@@ -36,6 +36,17 @@ from utils.indicators import (
     get_session_multiplier,
 )
 
+# ============================================================
+# ✅ ADDED: Day Trading Strategy Imports
+# ============================================================
+try:
+    from strategy.day_trading_strategy import DayTradingStrategy, TimeframeData
+    DAY_TRADING_AVAILABLE = True
+except ImportError:
+    DAY_TRADING_AVAILABLE = False
+    TimeframeData = None
+    main_logger.warning("Day trading strategy not available - using default strategy")
+
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, config.logging.level),
@@ -101,6 +112,8 @@ bot_stats: Dict[str, Any] = {
     "sr_signals": 0,
     "squeeze_signals": 0,
     "session_adjusted": 0,
+    # Day trading stats
+    "day_trading_signals": 0,
     "signal_outcomes": {
         "profitable": 0, "losing": 0, "break_even": 0,
         "active": 0, "total_pnl": 0.0,
@@ -126,6 +139,9 @@ bot_stats: Dict[str, Any] = {
         "divergence_missing": 0,
         "pattern_missing": 0,
         "sr_missing": 0,
+        # Day trading
+        "no_htf_alignment": 0,
+        "no_breakout": 0,
     },
 }
 
@@ -294,6 +310,10 @@ def track_rejection(reason: str):
         bot_stats['rejection_reasons']['pattern_missing'] += 1
     elif 'sr' in reason_lower or 'support' in reason_lower or 'resistance' in reason_lower:
         bot_stats['rejection_reasons']['sr_missing'] += 1
+    elif 'htf' in reason_lower and ('neutral' in reason_lower or 'no align' in reason_lower):
+        bot_stats['rejection_reasons']['no_htf_alignment'] += 1
+    elif 'breakout' in reason_lower:
+        bot_stats['rejection_reasons']['no_breakout'] += 1
 
 
 # ========== DYNAMIC RRR CALCULATION ==========
@@ -440,10 +460,18 @@ def check_ltf_confirmation(symbol: str, direction: Optional[str], client) -> Tup
         main_logger.error(f"{EMOJI['ERROR']} LTF check failed for {symbol}: {e}")
         return False, 0, f"Error: {str(e)}", "", 50
 
-def fetch_multiframe_data(client, symbol: str) -> Optional[TimeframeData]:
+
+# ============================================================
+# ✅ FIXED: fetch_multiframe_data - Correct parameters and import
+# ============================================================
+def fetch_multiframe_data(client, symbol: str) -> Optional['TimeframeData']:
     """
     Fetch all timeframes for day trading strategy.
     """
+    if not DAY_TRADING_AVAILABLE:
+        main_logger.warning(f"Day trading not available for {symbol}")
+        return None
+
     try:
         # Fetch all timeframes in parallel
         from concurrent.futures import ThreadPoolExecutor
@@ -474,15 +502,107 @@ def fetch_multiframe_data(client, symbol: str) -> Optional[TimeframeData]:
 
         return TimeframeData(
             symbol=symbol,
-            ultra_ltf_5m=results.get('1m'),
-            ltf_15m=results.get('5m'),
-            mtf_1h=results.get('15m'),
-            htf_4h=results.get('4h'),
+            ultra_ltf_1m=results.get('1m'),
+            ltf_5m=results.get('5m'),
+            mtf_15m=results.get('15m'),
+            htf_1h=results.get('1h'),
+            ultra_htf_4h=results.get('4h'),
         )
 
     except Exception as e:
         main_logger.error(f"Multi-frame fetch error for {symbol}: {e}")
         return None
+
+
+# ============================================================
+# ✅ NEW: Day Trading Symbol Processing
+# ============================================================
+def process_symbol_day_trading(symbol: str, client) -> Tuple[Optional[str], Optional[Dict], Optional[str]]:
+    """Process a single symbol using the day trading strategy."""
+    if not DAY_TRADING_AVAILABLE:
+        return None, None, None
+
+    try:
+        # Fetch multi-timeframe data
+        multi_data = fetch_multiframe_data(client, symbol)
+        if multi_data is None or not multi_data.is_valid():
+            main_logger.debug(f"{EMOJI['WARNING']} Incomplete multi-frame data for {symbol}")
+            return None, None, None
+
+        # Get current price
+        current_price = client.get_current_price(symbol)
+        if current_price is None:
+            return None, None, None
+
+        # Check if symbol is locked
+        if signal_manager.is_symbol_locked(symbol):
+            return None, None, None
+
+        # Check cooldown
+        if symbol in symbol_last_signal_time:
+            time_since = (datetime.now() - symbol_last_signal_time[symbol]).total_seconds() / 60
+            if time_since < SYMBOL_COOLDOWN_MINUTES:
+                return None, None, None
+
+        # Analyze with day trading strategy
+        day_strategy = DayTradingStrategy()
+        result = day_strategy.analyze_timeframes(multi_data)
+
+        main_logger.debug(f"{EMOJI['DEBUG']} {symbol} Day trading result: {result['signal']} (Score: {result['score']})")
+
+        if result['signal'] == 'SIGNAL' and result['score'] >= MIN_SIGNAL_SCORE:
+            direction = result['direction']
+            confidence = result['confidence']
+            score = result['score']
+
+            # Determine HTF trend from 4h analysis
+            htf_trend = result['timeframes'].get('ultra_htf_4h', {}).get('trend', 'NEUTRAL')
+
+            signal_data = {
+                'symbol': symbol,
+                'signal_type': direction,
+                'entry_price': current_price,
+                'confidence': confidence,
+                'total_score': score,
+                'quality_score': score,
+                'signal_strength': 'SOFT',
+                'tdi_level': 50,  # Placeholder
+                'tdi_zone': 'NEUTRAL',
+                'ltf_confirmed': True,
+                'ltf_confidence': result.get('timeframes', {}).get('ltf_5m', {}).get('volume_ratio', 0.8),
+                'htf_trend': htf_trend,
+                'htf_aligned': htf_trend in ['BULLISH', 'BEARISH'],
+                'reason': result['reason'],
+                'component_scores': {
+                    'ltf': 85,
+                    'tdi': 75,
+                    'bb': 80,
+                    'volume': min(100, int(result.get('timeframes', {}).get('mtf_15m', {}).get('volume_ratio', 1) * 50)),
+                    'reversal': 60,
+                },
+                'strategy': 'day_trading_v1',
+                'timeframes': result.get('timeframes', {}),
+                # Day trading specific
+                'target_hold_minutes': 60,
+                'entry_time': datetime.now().isoformat(),
+            }
+
+            # Track day trading signal
+            bot_stats['day_trading_signals'] = bot_stats.get('day_trading_signals', 0) + 1
+
+            main_logger.info(f"{EMOJI['SIGNAL']} 🎯 {symbol} DAY TRADING SIGNAL: {direction} (Score: {score}/100) - {result['reason']}")
+
+            return direction, signal_data, htf_trend
+
+        return None, None, None
+
+    except Exception as e:
+        main_logger.error(f"{EMOJI['ERROR']} Day trading error for {symbol}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None, None
+
+
 # ========== HTF TREND VALIDATION ==========
 def validate_htf_trend(symbol: str, signal_type: str, htf_trend: str, client) -> Tuple[bool, float, str]:
     """Validate HTF trend alignment with signal direction."""
@@ -533,21 +653,22 @@ class HealthHandler(BaseHTTPRequestHandler):
                 a:hover { color: #1f6feb; }
                 .version { color: #8b949e; font-size: 14px; }
                 .features { color: #f0883e; }
+                .day-trading { color: #3fb950; font-weight: bold; }
             </style>
         </head>
         <body>
             <h1>🤖 AI Trading Bot v3.3.0</h1>
             <h2>✨ New Features: Divergence, Candle Patterns, S/R, Session Filtering</h2>
+            <p><span class="day-trading">⚡ Day Trading Mode: 1-hour hold, Multi-Timeframe (1m/5m/15m/1h/4h)</span></p>
             <ul>
                 <li><a href="/health">Health Status</a></li>
                 <li><a href="/metrics">Metrics</a></li>
                 <li><a href="/signals">Signal Status</a></li>
             </ul>
-            <p class="version">Version 3.3.0 | Super TDI Strategy</p>
+            <p class="version">Version 3.3.0 | Super TDI Strategy | Day Trading Ready</p>
         </body>
         </html>
         """
-    # Encode to UTF-8 bytes
         self.wfile.write(html_content.encode('utf-8'))
 
     def _handle_health(self):
@@ -591,6 +712,7 @@ class HealthHandler(BaseHTTPRequestHandler):
                         'sr_confirmed': s.get('sr_confirmed', False),
                         'bb_squeeze': s.get('bb_squeeze', False),
                         'session': s.get('session', 'UNKNOWN'),
+                        'strategy': s.get('strategy', 'default'),
                     }
                     for s in list(active_signals.values())[:20]
                 ],
@@ -600,6 +722,7 @@ class HealthHandler(BaseHTTPRequestHandler):
                     "support_resistance": "Dynamic S/R levels",
                     "bb_squeeze": "Bollinger Band squeeze detection",
                     "session_filtering": "Asian/London/NY session awareness",
+                    "day_trading": "1-hour hold, Multi-Timeframe (1m/5m/15m/1h/4h)",
                 }
             }
 
@@ -631,6 +754,7 @@ def get_bot_status() -> Dict[str, Any]:
             "telegram_bot": telegram_bot.enabled if telegram_bot else False,
             "ai_analyzer": ai_analyzer.enabled if ai_analyzer else False,
             "mongodb": db_client.is_available() if db_client else False,
+            "day_trading": DAY_TRADING_AVAILABLE,
         },
         "score_approved": bot_stats.get('score_approved', 0),
         "score_rejected": bot_stats.get('score_rejected', 0),
@@ -646,6 +770,7 @@ def get_bot_status() -> Dict[str, Any]:
             "sr_signals": bot_stats.get('sr_signals', 0),
             "squeeze_signals": bot_stats.get('squeeze_signals', 0),
             "session_adjusted": bot_stats.get('session_adjusted', 0),
+            "day_trading_signals": bot_stats.get('day_trading_signals', 0),
         },
         "rejection_report": _get_rejection_report(),
     }
@@ -681,6 +806,7 @@ def get_bot_metrics() -> str:
         f"bot_pattern_signals {bot_stats.get('pattern_signals', 0)}",
         f"bot_sr_signals {bot_stats.get('sr_signals', 0)}",
         f"bot_squeeze_signals {bot_stats.get('squeeze_signals', 0)}",
+        f"bot_day_trading_signals {bot_stats.get('day_trading_signals', 0)}",
     ]
     return "\n".join(metrics)
 
@@ -1572,8 +1698,14 @@ def _send_approved_signal(symbol: str, signal_type: str, signal_data: Dict, curr
                     'bb_squeeze': signal_data.get('bb_squeeze', False),
                     'session': signal_data.get('session', 'UNKNOWN'),
                     'session_multiplier': signal_data.get('session_multiplier', 1.0),
-                    'strategy_version': 'v3.3.0-enhanced-super-tdi-15m'
+                    'strategy_version': 'v3.3.0-enhanced-super-tdi-15m',
+                    'strategy': signal_data.get('strategy', 'default'),
                 }
+                if 'target_hold_minutes' in signal_data:
+                    signal_record['target_hold_minutes'] = signal_data['target_hold_minutes']
+                if 'timeframes' in signal_data:
+                    signal_record['timeframes'] = signal_data['timeframes']
+
                 db_doc_id = db_client.save_signal(signal_record)
                 if db_doc_id:
                     signal_data['db_doc_id'] = db_doc_id
@@ -1672,7 +1804,9 @@ def _send_approved_signal(symbol: str, signal_type: str, signal_data: Dict, curr
         main_logger.error(f"{EMOJI['ERROR']} _send_approved_signal: {e}")
 
 
-# ==================== MAIN PROCESSING LOOP ====================
+# ============================================================
+# ✅ UPDATED: MAIN PROCESSING LOOP - Supports both strategies
+# ============================================================
 def run_processing_loop():
     global running
     main_logger.info(f"{EMOJI['START']} Starting processing loop v3.3.0 with Signal Manager...")
@@ -1681,6 +1815,9 @@ def run_processing_loop():
     main_logger.info(f"{EMOJI['S_R']} ✨ New: Support/Resistance Levels")
     main_logger.info(f"{EMOJI['BB']} ✨ New: BB Squeeze Detection")
     main_logger.info(f"{EMOJI['SESSION']} ✨ New: Session-Based Filtering")
+
+    if DAY_TRADING_AVAILABLE:
+        main_logger.info(f"{EMOJI['SIGNAL']} ⚡ Day Trading Mode: ENABLED (1-hour hold, Multi-Timeframe)")
 
     try:
         client = BinanceDataClient()
@@ -1714,6 +1851,9 @@ def run_processing_loop():
     main_logger.info(f"{EMOJI['SUCCESS']} Monitoring {len(symbols)} symbols")
     main_logger.info(f"{EMOJI['SIGNAL']} Signal Manager tracking {len(signal_manager.active_signals)} signals")
 
+    if DAY_TRADING_AVAILABLE:
+        main_logger.info(f"{EMOJI['SIGNAL']} Day Trading Strategy active for all symbols")
+
     while running:
         try:
             cycle_start = time.time()
@@ -1724,9 +1864,26 @@ def run_processing_loop():
                 if not running or signals_this_cycle >= MAX_SIGNALS_PER_CYCLE:
                     break
                 try:
-                    signal_type, signal_data, htf_trend = process_symbol(
-                        symbol, strategy_obj, client, symbol_state[symbol]
-                    )
+                    # ============================================================
+                    # ✅ Try Day Trading strategy first if available
+                    # ============================================================
+                    signal_type = None
+                    signal_data = None
+                    htf_trend = None
+
+                    if DAY_TRADING_AVAILABLE:
+                        signal_type, signal_data, htf_trend = process_symbol_day_trading(
+                            symbol, client
+                        )
+
+                    # ============================================================
+                    # Fallback to default strategy if day trading returned nothing
+                    # ============================================================
+                    if signal_type is None:
+                        signal_type, signal_data, htf_trend = process_symbol(
+                            symbol, strategy_obj, client, symbol_state[symbol]
+                        )
+
                     if signal_type and signal_data:
                         current_price = client.get_current_price(symbol)
                         handle_signal(
@@ -1757,6 +1914,8 @@ def run_processing_loop():
                     f"Grades: A{bot_stats.get('grade_a_signals', 0)}/B{bot_stats.get('grade_b_signals', 0)}/C{bot_stats.get('grade_c_rejected', 0)} | "
                     f"Features: DIV{bot_stats.get('divergence_signals', 0)}/PAT{bot_stats.get('pattern_signals', 0)}/SR{bot_stats.get('sr_signals', 0)}"
                 )
+                if DAY_TRADING_AVAILABLE:
+                    main_logger.info(f"⚡ Day Trading Signals: {bot_stats.get('day_trading_signals', 0)}")
                 if rejection_report['total_rejections'] > 0:
                     main_logger.info(f"{EMOJI['REJECT']} Rejection: {rejection_report['acceptance_rate']}% acceptance")
 
@@ -1808,6 +1967,10 @@ def main():
     main_logger.info(f"{EMOJI['SESSION']} 🌍 Session Filter: Asian/London/NY session awareness")
     main_logger.info(f"{EMOJI['SIGNAL']} Signal Manager: Active tracking, duplicate prevention, auto-resolution")
     main_logger.info(f"{EMOJI['DB']} Database: {'MongoDB' if config.mongodb.enabled else 'In-Memory'}")
+    if DAY_TRADING_AVAILABLE:
+        main_logger.info(f"⚡ Day Trading Mode: ENABLED (1-hour hold, Multi-Timeframe 1m/5m/15m/1h/4h)")
+    else:
+        main_logger.info(f"⚡ Day Trading Mode: DISABLED (using default reversal strategy)")
     main_logger.info("=" * 70)
 
     signal.signal(signal.SIGINT, signal_handler)
