@@ -169,7 +169,17 @@ class StrategyConfig:
     # BB Squeeze
     enable_bb_squeeze: bool = True
     squeeze_threshold: float = 0.6
+        # ========== TIMEFRAME CONFIGURATION ==========
+    ULTRA_LTF_TIMEFRAME = "1m"    # Ultra-fine entry timing
+    LTF_TIMEFRAME = "5m"          # Entry confirmation
+    TIMEFRAME = "15m"             # Main decision timeframe
+    HTF_TIMEFRAME = "1h"          # Medium trend
+    ULTRA_HTF_TIMEFRAME = "4h"    # Major trend
 
+    # ========== HOLD TIME CONFIGURATION ==========
+    MAX_HOLD_MINUTES = 60         # Maximum 1 hour
+    MIN_HOLD_MINUTES = 15         # Minimum 15 minutes
+    EXIT_AT_TIME = True           # Exit at time target
     # Session Filtering
     enable_session_filtering: bool = True
     session_multipliers: Dict[str, float] = field(default_factory=lambda: {

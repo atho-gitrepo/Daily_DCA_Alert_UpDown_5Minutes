@@ -440,7 +440,49 @@ def check_ltf_confirmation(symbol: str, direction: Optional[str], client) -> Tup
         main_logger.error(f"{EMOJI['ERROR']} LTF check failed for {symbol}: {e}")
         return False, 0, f"Error: {str(e)}", "", 50
 
+def fetch_multiframe_data(client, symbol: str) -> Optional[TimeframeData]:
+    """
+    Fetch all timeframes for day trading strategy.
+    """
+    try:
+        # Fetch all timeframes in parallel
+        from concurrent.futures import ThreadPoolExecutor
 
+        def fetch_tf(interval, limit):
+            return client.get_historical_klines(symbol, interval=interval, limit=limit)
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                '1m': executor.submit(fetch_tf, '1m', 100),
+                '5m': executor.submit(fetch_tf, '5m', 100),
+                '15m': executor.submit(fetch_tf, '15m', 100),
+                '1h': executor.submit(fetch_tf, '1h', 50),
+                '4h': executor.submit(fetch_tf, '4h', 30),
+            }
+
+            results = {}
+            for tf, future in futures.items():
+                try:
+                    results[tf] = future.result(timeout=10)
+                except Exception as e:
+                    main_logger.error(f"Failed to fetch {tf} for {symbol}: {e}")
+                    results[tf] = None
+
+        # Check all data fetched
+        if any(df is None or df.empty for df in results.values()):
+            return None
+
+        return TimeframeData(
+            symbol=symbol,
+            ultra_ltf_5m=results.get('1m'),
+            ltf_15m=results.get('5m'),
+            mtf_1h=results.get('15m'),
+            htf_4h=results.get('4h'),
+        )
+
+    except Exception as e:
+        main_logger.error(f"Multi-frame fetch error for {symbol}: {e}")
+        return None
 # ========== HTF TREND VALIDATION ==========
 def validate_htf_trend(symbol: str, signal_type: str, htf_trend: str, client) -> Tuple[bool, float, str]:
     """Validate HTF trend alignment with signal direction."""
