@@ -45,7 +45,9 @@ try:
 except ImportError:
     DAY_TRADING_AVAILABLE = False
     TimeframeData = None
-    main_logger.warning("Day trading strategy not available - using default strategy")
+    # main_logger is defined later, so use logger for now
+    import logging
+    logging.getLogger(__name__).warning("Day trading strategy not available - using default strategy")
 
 # Configure logging
 logging.basicConfig(
@@ -462,15 +464,24 @@ def check_ltf_confirmation(symbol: str, direction: Optional[str], client) -> Tup
 
 
 # ============================================================
-# ✅ FIXED: fetch_multiframe_data - Correct parameters and import
+# ✅ FIXED: fetch_multiframe_data - Correct field names
 # ============================================================
 def fetch_multiframe_data(client, symbol: str) -> Optional['TimeframeData']:
-    """Fetch all timeframes for day trading strategy."""
+    """
+    Fetch all timeframes for day trading strategy.
+    ✅ CORRECT FIELD NAMES:
+        ultra_ltf_1m   = 1m timeframe
+        ltf_5m         = 5m timeframe
+        mtf_15m        = 15m timeframe
+        htf_1h         = 1h timeframe
+        ultra_htf_4h   = 4h timeframe
+    """
     if not DAY_TRADING_AVAILABLE:
         main_logger.warning(f"Day trading not available for {symbol}")
         return None
 
     try:
+        # Fetch all timeframes in parallel
         from concurrent.futures import ThreadPoolExecutor
 
         def fetch_tf(interval, limit):
@@ -493,25 +504,28 @@ def fetch_multiframe_data(client, symbol: str) -> Optional['TimeframeData']:
                     main_logger.error(f"Failed to fetch {tf} for {symbol}: {e}")
                     results[tf] = None
 
+        # Check all data fetched
         if any(df is None or df.empty for df in results.values()):
+            main_logger.debug(f"⚠️ Incomplete multi-frame data for {symbol}")
             return None
 
-        # ✅ FIX: Correct field names
+        # ✅ FIX: Correct field names matching TimeframeData
         return TimeframeData(
             symbol=symbol,
-            ultra_ltf_1m=results.get('1m'),    # ✅ CORRECT
-            ltf_5m=results.get('5m'),          # ✅ CORRECT
-            mtf_15m=results.get('15m'),        # ✅ CORRECT
-            htf_1h=results.get('1h'),          # ✅ CORRECT
-            ultra_htf_4h=results.get('4h'),    # ✅ CORRECT
+            ultra_ltf_1m=results.get('1m'),    # ✅ 1m (ultra LTF)
+            ltf_5m=results.get('5m'),          # ✅ 5m (LTF)
+            mtf_15m=results.get('15m'),        # ✅ 15m (MTF)
+            htf_1h=results.get('1h'),          # ✅ 1h (HTF)
+            ultra_htf_4h=results.get('4h'),    # ✅ 4h (ultra HTF)
         )
 
     except Exception as e:
         main_logger.error(f"Multi-frame fetch error for {symbol}: {e}")
         return None
 
+
 # ============================================================
-# ✅ NEW: Day Trading Symbol Processing
+# ✅ FIXED: Day Trading Symbol Processing
 # ============================================================
 def process_symbol_day_trading(symbol: str, client) -> Tuple[Optional[str], Optional[Dict], Optional[str]]:
     """Process a single symbol using the day trading strategy."""
@@ -522,7 +536,7 @@ def process_symbol_day_trading(symbol: str, client) -> Tuple[Optional[str], Opti
         # Fetch multi-timeframe data
         multi_data = fetch_multiframe_data(client, symbol)
         if multi_data is None or not multi_data.is_valid():
-            main_logger.debug(f"{EMOJI['WARNING']} Incomplete multi-frame data for {symbol}")
+            main_logger.debug(f"⚠️ Incomplete multi-frame data for {symbol}")
             return None, None, None
 
         # Get current price
@@ -544,8 +558,6 @@ def process_symbol_day_trading(symbol: str, client) -> Tuple[Optional[str], Opti
         day_strategy = DayTradingStrategy()
         result = day_strategy.analyze_timeframes(multi_data)
 
-        main_logger.debug(f"{EMOJI['DEBUG']} {symbol} Day trading result: {result['signal']} (Score: {result['score']})")
-
         if result['signal'] == 'SIGNAL' and result['score'] >= MIN_SIGNAL_SCORE:
             direction = result['direction']
             confidence = result['confidence']
@@ -562,10 +574,10 @@ def process_symbol_day_trading(symbol: str, client) -> Tuple[Optional[str], Opti
                 'total_score': score,
                 'quality_score': score,
                 'signal_strength': 'SOFT',
-                'tdi_level': 50,  # Placeholder
+                'tdi_level': 50,
                 'tdi_zone': 'NEUTRAL',
                 'ltf_confirmed': True,
-                'ltf_confidence': result.get('timeframes', {}).get('ltf_5m', {}).get('volume_ratio', 0.8),
+                'ltf_confidence': 0.8,
                 'htf_trend': htf_trend,
                 'htf_aligned': htf_trend in ['BULLISH', 'BEARISH'],
                 'reason': result['reason'],
@@ -573,17 +585,15 @@ def process_symbol_day_trading(symbol: str, client) -> Tuple[Optional[str], Opti
                     'ltf': 85,
                     'tdi': 75,
                     'bb': 80,
-                    'volume': min(100, int(result.get('timeframes', {}).get('mtf_15m', {}).get('volume_ratio', 1) * 50)),
+                    'volume': 70,
                     'reversal': 60,
                 },
                 'strategy': 'day_trading_v1',
                 'timeframes': result.get('timeframes', {}),
-                # Day trading specific
                 'target_hold_minutes': 60,
                 'entry_time': datetime.now().isoformat(),
             }
 
-            # Track day trading signal
             bot_stats['day_trading_signals'] = bot_stats.get('day_trading_signals', 0) + 1
 
             main_logger.info(f"{EMOJI['SIGNAL']} 🎯 {symbol} DAY TRADING SIGNAL: {direction} (Score: {score}/100) - {result['reason']}")
@@ -593,7 +603,7 @@ def process_symbol_day_trading(symbol: str, client) -> Tuple[Optional[str], Opti
         return None, None, None
 
     except Exception as e:
-        main_logger.error(f"{EMOJI['ERROR']} Day trading error for {symbol}: {e}")
+        main_logger.error(f"Day trading error for {symbol}: {e}")
         import traceback
         traceback.print_exc()
         return None, None, None

@@ -1,6 +1,6 @@
 """
 Day Trading Strategy - Momentum Based
-Version: 1.0.0 - Multi-Timeframe Day Trading
+Version: 1.0.1 - FIXED: TimeframeData field names
 Designed for 1-hour holds
 """
 
@@ -30,19 +30,22 @@ EMOJI = {
 
 @dataclass
 class TimeframeData:
-    """Data from each timeframe."""
+    """Data from each timeframe for day trading."""
     symbol: str
-    ultra_ltf_5m: pd.DataFrame  # 5m (entry timing)
-    ltf_15m: pd.DataFrame       # 15m (entry confirmation)
-    mtf_1h: pd.DataFrame        # 1h (trend direction)
-    htf_4h: pd.DataFrame        # 4h (major trend)
+    ultra_ltf_1m: pd.DataFrame   # 1m (ultra entry timing)
+    ltf_5m: pd.DataFrame         # 5m (entry timing)
+    mtf_15m: pd.DataFrame        # 15m (entry confirmation)
+    htf_1h: pd.DataFrame         # 1h (trend direction)
+    ultra_htf_4h: pd.DataFrame   # 4h (major trend)
 
     def is_valid(self) -> bool:
+        """Check if all timeframes have data."""
         return all([
-            self.ultra_ltf_5m is not None and not self.ultra_ltf_5m.empty,
-            self.ltf_15m is not None and not self.ltf_15m.empty,
-            self.mtf_1h is not None and not self.mtf_1h.empty,
-            self.htf_4h is not None and not self.htf_4h.empty,
+            self.ultra_ltf_1m is not None and not self.ultra_ltf_1m.empty,
+            self.ltf_5m is not None and not self.ltf_5m.empty,
+            self.mtf_15m is not None and not self.mtf_15m.empty,
+            self.htf_1h is not None and not self.htf_1h.empty,
+            self.ultra_htf_4h is not None and not self.ultra_htf_4h.empty,
         ])
 
 
@@ -71,14 +74,12 @@ class DayTradingStrategy:
         self.MIN_HOLD_MINUTES = 15
 
         # Momentum thresholds
-        self.MOMENTUM_THRESHOLD = 1.0  # 1% momentum
-        self.VOLUME_THRESHOLD = 1.5    # 1.5x volume
+        self.MOMENTUM_THRESHOLD = 1.0
+        self.VOLUME_THRESHOLD = 1.5
         self.MIN_SCORE = 70
 
     def analyze_timeframes(self, data: TimeframeData) -> Dict[str, Any]:
-        """
-        Analyze all timeframes and return signals.
-        """
+        """Analyze all timeframes and return signals."""
         result = {
             'signal': 'NO_TRADE',
             'direction': 'NONE',
@@ -90,24 +91,28 @@ class DayTradingStrategy:
 
         try:
             # ===== HTF (4h) - Major Trend =====
-            htf_4h = self._analyze_htf_4h(data.htf_4h)
-            result['timeframes']['htf_4h'] = htf_4h
+            htf_4h = self._analyze_ultra_htf_4h(data.ultra_htf_4h)
+            result['timeframes']['ultra_htf_4h'] = htf_4h
 
             # ===== HTF (1h) - Medium Trend =====
-            htf_1h = self._analyze_htf_1h(data.mtf_1h)
+            htf_1h = self._analyze_htf_1h(data.htf_1h)
             result['timeframes']['htf_1h'] = htf_1h
 
             # ===== MTF (15m) - Breakout Detection =====
-            mtf_15m = self._analyze_mtf_15m(data.ltf_15m)
+            mtf_15m = self._analyze_mtf_15m(data.mtf_15m)
             result['timeframes']['mtf_15m'] = mtf_15m
 
             # ===== LTF (5m) - Entry Confirmation =====
-            ltf_5m = self._analyze_ltf_5m(data.ultra_ltf_5m)
+            ltf_5m = self._analyze_ltf_5m(data.ltf_5m)
             result['timeframes']['ltf_5m'] = ltf_5m
+
+            # ===== ULTRA LTF (1m) - Exact Entry =====
+            ultra_1m = self._analyze_ultra_1m(data.ultra_ltf_1m)
+            result['timeframes']['ultra_1m'] = ultra_1m
 
             # ===== Generate Signal =====
             signal, direction, confidence, score, reason = self._generate_signal(
-                htf_4h, htf_1h, mtf_15m, ltf_5m
+                htf_4h, htf_1h, mtf_15m, ltf_5m, ultra_1m
             )
 
             result['signal'] = signal
@@ -118,25 +123,26 @@ class DayTradingStrategy:
 
         except Exception as e:
             self.logger.error(f"Error analyzing timeframes: {e}")
+            import traceback
+            traceback.print_exc()
 
         return result
 
-    def _analyze_htf_4h(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def _analyze_ultra_htf_4h(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Analyze 4h timeframe - Major trend."""
         if df is None or df.empty:
             return {'trend': 'NEUTRAL', 'strength': 0}
 
         try:
-            # Calculate EMA
-            df = Indicators.calculate_ema(df, 'close', 50)  # 4h EMA = 200 periods on 15m
-            df = Indicators.calculate_ema(df, 'close', 200)
+            df = df.copy()
+            df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
+            df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
 
             last = df.iloc[-1]
             close = last.get('close', 0)
-            ema50 = last.get('close_ema_50', close)
-            ema200 = last.get('close_ema_200', close)
+            ema50 = last.get('ema50', close)
+            ema200 = last.get('ema200', close)
 
-            # Trend detection
             if close > ema50 and ema50 > ema200:
                 trend = 'BULLISH'
                 strength = 1.0
@@ -153,17 +159,9 @@ class DayTradingStrategy:
                 trend = 'NEUTRAL'
                 strength = 0
 
-            # ADX for trend strength
-            df = Indicators.calculate_adx(df)
-            adx = last.get('adx', 20)
-
-            if adx > 25:
-                strength = min(1.0, strength + 0.2)
-
             return {
                 'trend': trend,
                 'strength': strength,
-                'adx': adx,
                 'ema50': ema50,
                 'ema200': ema200,
             }
@@ -178,17 +176,17 @@ class DayTradingStrategy:
             return {'trend': 'NEUTRAL', 'strength': 0}
 
         try:
-            df = Indicators.calculate_ema(df, 'close', 20)  # 1h EMA = 20 periods
-            df = Indicators.calculate_ema(df, 'close', 50)
+            df = df.copy()
+            df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
+            df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
             df = Indicators.calculate_tdi(df)
 
             last = df.iloc[-1]
             close = last.get('close', 0)
-            ema20 = last.get('close_ema_20', close)
-            ema50 = last.get('close_ema_50', close)
+            ema20 = last.get('ema20', close)
+            ema50 = last.get('ema50', close)
             tdi = last.get('tdi_slow_ma', 50)
 
-            # Trend
             if close > ema20 and ema20 > ema50:
                 trend = 'BULLISH'
                 strength = 0.8
@@ -204,12 +202,6 @@ class DayTradingStrategy:
             else:
                 trend = 'NEUTRAL'
                 strength = 0
-
-            # TDI momentum
-            if 25 <= tdi <= 35:
-                strength += 0.1  # Oversold but trending up
-            elif 65 <= tdi <= 75:
-                strength += 0.1  # Overbought but trending down
 
             return {
                 'trend': trend,
@@ -229,10 +221,16 @@ class DayTradingStrategy:
             return {'breakout': False, 'direction': 'NONE'}
 
         try:
-            # Calculate indicators
+            df = df.copy()
             df = calculate_heikin_ashi(df)
             df = Indicators.calculate_bollinger_bands(df)
             df = Indicators.calculate_tdi(df)
+
+            if 'volume' in df.columns:
+                df['volume_sma'] = df['volume'].rolling(20).mean()
+                df['volume_ratio'] = df['volume'] / df['volume_sma'].replace(0, 1)
+            else:
+                df['volume_ratio'] = 1.0
 
             last = df.iloc[-1]
             prev = df.iloc[-2] if len(df) > 1 else last
@@ -242,23 +240,18 @@ class DayTradingStrategy:
             ha_prev_close = prev.get('ha_close', close)
             bb_upper = last.get('bb_upper', 0)
             bb_lower = last.get('bb_lower', 0)
-            bb_middle = last.get('bb_middle', 0)
             tdi_fast = last.get('tdi_fast_ma', 50)
             tdi_slow = last.get('tdi_slow_ma', 50)
             volume_ratio = last.get('volume_ratio', 1)
 
-            # Breakout detection
             above_bb_upper = ha_close > bb_upper * 1.001 if bb_upper > 0 else False
             below_bb_lower = ha_close < bb_lower * 0.999 if bb_lower > 0 else False
 
-            # Momentum
             bullish_momentum = tdi_fast > tdi_slow and ha_close > ha_prev_close
             bearish_momentum = tdi_fast < tdi_slow and ha_close < ha_prev_close
 
-            # Volume confirmation
             volume_confirmed = volume_ratio > self.VOLUME_THRESHOLD
 
-            # Breakout
             bullish_breakout = above_bb_upper and bullish_momentum and volume_confirmed
             bearish_breakout = below_bb_lower and bearish_momentum and volume_confirmed
 
@@ -267,7 +260,6 @@ class DayTradingStrategy:
                 'direction': 'BUY' if bullish_breakout else 'SELL' if bearish_breakout else 'NONE',
                 'bb_upper': bb_upper,
                 'bb_lower': bb_lower,
-                'bb_middle': bb_middle,
                 'tdi_fast': tdi_fast,
                 'tdi_slow': tdi_slow,
                 'volume_ratio': volume_ratio,
@@ -279,14 +271,21 @@ class DayTradingStrategy:
             return {'breakout': False, 'direction': 'NONE'}
 
     def _analyze_ltf_5m(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Analyze 5m timeframe - Entry timing."""
+        """Analyze 5m timeframe - Entry confirmation."""
         if df is None or df.empty:
             return {'entry': False, 'direction': 'NONE'}
 
         try:
+            df = df.copy()
             df = calculate_heikin_ashi(df)
             df = Indicators.calculate_tdi(df, rsi_period=10, slow_ma_period=5)
             df = Indicators.calculate_bollinger_bands(df)
+
+            if 'volume' in df.columns:
+                df['volume_sma'] = df['volume'].rolling(20).mean()
+                df['volume_ratio'] = df['volume'] / df['volume_sma'].replace(0, 1)
+            else:
+                df['volume_ratio'] = 1.0
 
             last = df.iloc[-1]
             prev = df.iloc[-2] if len(df) > 1 else last
@@ -300,15 +299,12 @@ class DayTradingStrategy:
             tdi_slow_prev = prev.get('tdi_slow_ma', 50)
             volume_ratio = last.get('volume_ratio', 1)
 
-            # Crossover detection
             bullish_cross = tdi_fast > tdi_slow and tdi_fast_prev <= tdi_slow_prev
             bearish_cross = tdi_fast < tdi_slow and tdi_fast_prev >= tdi_slow_prev
 
-            # HA momentum
             ha_bullish = ha_close > ha_prev_close and last.get('ha_color', 0) == 1
             ha_bearish = ha_close < ha_prev_close and last.get('ha_color', 0) == -1
 
-            # Entry signal
             entry_buy = bullish_cross and ha_bullish and volume_ratio > 1.0
             entry_sell = bearish_cross and ha_bearish and volume_ratio > 1.0
 
@@ -327,39 +323,67 @@ class DayTradingStrategy:
             self.logger.error(f"Error in 5m analysis: {e}")
             return {'entry': False, 'direction': 'NONE'}
 
-    def _generate_signal(self, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict) -> Tuple[str, str, float, int, str]:
-        """
-        Generate final signal from all timeframes.
-        """
+    def _analyze_ultra_1m(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Analyze 1m timeframe - Exact entry timing."""
+        if df is None or df.empty:
+            return {'bullish_cross': False, 'bearish_cross': False}
+
+        try:
+            df = df.copy()
+            df = calculate_heikin_ashi(df)
+            df = Indicators.calculate_tdi(df, rsi_period=5, slow_ma_period=3)
+
+            last = df.iloc[-1]
+            prev = df.iloc[-2] if len(df) > 1 else last
+
+            tdi_fast = last.get('tdi_fast_ma', 50)
+            tdi_slow = last.get('tdi_slow_ma', 50)
+            tdi_fast_prev = prev.get('tdi_fast_ma', 50)
+            tdi_slow_prev = prev.get('tdi_slow_ma', 50)
+
+            bullish_cross = tdi_fast > tdi_slow and tdi_fast_prev <= tdi_slow_prev
+            bearish_cross = tdi_fast < tdi_slow and tdi_fast_prev >= tdi_slow_prev
+
+            return {
+                'bullish_cross': bullish_cross,
+                'bearish_cross': bearish_cross,
+                'tdi_fast': tdi_fast,
+                'tdi_slow': tdi_slow,
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error in 1m analysis: {e}")
+            return {'bullish_cross': False, 'bearish_cross': False}
+
+    def _generate_signal(self, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict, ultra_1m: Dict) -> Tuple[str, str, float, int, str]:
+        """Generate final signal from all timeframes."""
         # ===== BUY SIGNAL =====
-        if self._is_buy_signal(htf_4h, htf_1h, mtf_15m, ltf_5m):
-            confidence = self._calculate_confidence(htf_4h, htf_1h, mtf_15m, ltf_5m)
+        if self._is_buy_signal(htf_4h, htf_1h, mtf_15m, ltf_5m, ultra_1m):
+            confidence = self._calculate_confidence(htf_4h, htf_1h, mtf_15m, ltf_5m, ultra_1m)
             score = int(confidence * 100)
-            reason = self._build_reason('BUY', htf_4h, htf_1h, mtf_15m, ltf_5m)
+            reason = self._build_reason('BUY', htf_4h, htf_1h, mtf_15m, ltf_5m, ultra_1m)
 
             if score >= self.MIN_SCORE:
                 return 'SIGNAL', 'BUY', confidence, score, reason
 
         # ===== SELL SIGNAL =====
-        if self._is_sell_signal(htf_4h, htf_1h, mtf_15m, ltf_5m):
-            confidence = self._calculate_confidence(htf_4h, htf_1h, mtf_15m, ltf_5m)
+        if self._is_sell_signal(htf_4h, htf_1h, mtf_15m, ltf_5m, ultra_1m):
+            confidence = self._calculate_confidence(htf_4h, htf_1h, mtf_15m, ltf_5m, ultra_1m)
             score = int(confidence * 100)
-            reason = self._build_reason('SELL', htf_4h, htf_1h, mtf_15m, ltf_5m)
+            reason = self._build_reason('SELL', htf_4h, htf_1h, mtf_15m, ltf_5m, ultra_1m)
 
             if score >= self.MIN_SCORE:
                 return 'SIGNAL', 'SELL', confidence, score, reason
 
         return 'NO_TRADE', 'NONE', 0, 0, "No signal conditions met"
 
-    def _is_buy_signal(self, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict) -> bool:
+    def _is_buy_signal(self, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict, ultra_1m: Dict) -> bool:
         """Check BUY signal conditions."""
-        # MUST have bullish 1h and 4h (higher timeframe alignment)
         if htf_4h.get('trend') != 'BULLISH':
             return False
         if htf_1h.get('trend') != 'BULLISH':
             return False
 
-        # 15m breakout or 5m entry
         if mtf_15m.get('direction') == 'BUY':
             return True
         if ltf_5m.get('direction') == 'BUY':
@@ -367,15 +391,13 @@ class DayTradingStrategy:
 
         return False
 
-    def _is_sell_signal(self, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict) -> bool:
+    def _is_sell_signal(self, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict, ultra_1m: Dict) -> bool:
         """Check SELL signal conditions."""
-        # MUST have bearish 1h and 4h
         if htf_4h.get('trend') != 'BEARISH':
             return False
         if htf_1h.get('trend') != 'BEARISH':
             return False
 
-        # 15m breakdown or 5m entry
         if mtf_15m.get('direction') == 'SELL':
             return True
         if ltf_5m.get('direction') == 'SELL':
@@ -383,23 +405,19 @@ class DayTradingStrategy:
 
         return False
 
-    def _calculate_confidence(self, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict) -> float:
+    def _calculate_confidence(self, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict, ultra_1m: Dict) -> float:
         """Calculate confidence score."""
         confidence = 0.5
 
-        # HTF strength (40% weight)
         confidence += htf_4h.get('strength', 0) * 0.20
         confidence += htf_1h.get('strength', 0) * 0.20
 
-        # MTF breakout (20% weight)
         if mtf_15m.get('breakout'):
             confidence += 0.20
 
-        # LTF entry (20% weight)
         if ltf_5m.get('entry'):
             confidence += 0.20
 
-        # Volume (bonus)
         volume_ratio = max(mtf_15m.get('volume_ratio', 1), ltf_5m.get('volume_ratio', 1))
         if volume_ratio > 2.0:
             confidence += 0.10
@@ -408,9 +426,9 @@ class DayTradingStrategy:
 
         return min(0.95, confidence)
 
-    def _build_reason(self, direction: str, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict) -> str:
+    def _build_reason(self, direction: str, htf_4h: Dict, htf_1h: Dict, mtf_15m: Dict, ltf_5m: Dict, ultra_1m: Dict) -> str:
         """Build human-readable reason."""
-        parts = [f"{direction}: Multiframe confirmed"]
+        parts = [f"{direction}: Multi-frame confirmed"]
 
         parts.append(f"4h {htf_4h.get('trend', 'NEUTRAL')} ({htf_4h.get('strength', 0):.0%})")
         parts.append(f"1h {htf_1h.get('trend', 'NEUTRAL')} ({htf_1h.get('strength', 0):.0%})")
@@ -419,25 +437,39 @@ class DayTradingStrategy:
             parts.append(f"15m BREAKOUT")
         if ltf_5m.get('entry'):
             parts.append(f"5m ENTRY")
+        if ultra_1m.get('bullish_cross') or ultra_1m.get('bearish_cross'):
+            parts.append(f"1m CROSSOVER")
 
         return " | ".join(parts)
 
     def get_stop_loss(self, entry: float, direction: str, df: pd.DataFrame) -> Tuple[float, float]:
-        """Calculate SL/TP for 1-hour hold."""
-        # ATR for volatility-based SL
-        atr_period = 14
-        df = Indicators._calculate_atr(df, atr_period)
-        atr = df['atr'].iloc[-1] if 'atr' in df.columns else entry * 0.01
+        """Calculate SL/TP for 1-hour hold using ATR."""
+        try:
+            high = df['high'].values
+            low = df['low'].values
+            close = df['close'].values
 
-        # SL = entry ± (1.5 * ATR)
-        if direction == 'BUY':
-            sl = entry - (1.5 * atr)
-            tp = entry + (3.0 * atr)  # 2:1 RRR
-        else:
-            sl = entry + (1.5 * atr)
-            tp = entry - (3.0 * atr)
+            tr1 = high - low
+            tr2 = np.abs(high - np.roll(close, 1))
+            tr3 = np.abs(low - np.roll(close, 1))
+            tr = np.maximum(tr1, np.maximum(tr2, tr3))
+            atr = np.mean(tr[-14:]) if len(tr) >= 14 else entry * 0.01
 
-        return sl, tp
+            if direction == 'BUY':
+                sl = entry - (1.5 * atr)
+                tp = entry + (3.0 * atr)
+            else:
+                sl = entry + (1.5 * atr)
+                tp = entry - (3.0 * atr)
+
+            return sl, tp
+
+        except Exception as e:
+            self.logger.error(f"Error calculating SL/TP: {e}")
+            if direction == 'BUY':
+                return entry * 0.985, entry * 1.03
+            else:
+                return entry * 1.015, entry * 0.97
 
     def get_exit_time(self, entry_time: datetime) -> datetime:
         """Calculate exit time for 1-hour hold."""
