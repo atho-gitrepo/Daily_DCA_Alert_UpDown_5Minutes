@@ -1,4 +1,4 @@
-# Core Dependencies
+# Core Dependencies - ALL PINNED
 python-binance==1.0.19
 pandas==2.0.3
 numpy==1.24.3
@@ -12,14 +12,14 @@ httpx==0.25.1
 python-telegram-bot==20.6
 
 # MongoDB
-pymongo>=4.5.0
-dnspython>=2.4.0
+pymongo==4.6.1
+dnspython==2.4.2
 
 # HTTP & Networking
 requests==2.31.0
 urllib3==2.0.7
-aiohttp>=3.8.0
-asyncio>=3.4.3
+aiohttp==3.9.1
+asyncio==3.4.3
 
 # Utilities
 python-dateutil==2.8.2
@@ -27,7 +27,7 @@ pytz==2023.3
 
 # Logging & Monitoring
 prometheus-client==0.17.1
-redis>=4.5.0
+redis==5.0.1
 
 # Database (Optional)
 sqlalchemy==2.0.22
@@ -38,3 +38,4 @@ pytest==7.4.3
 black==23.11.0
 flake8==6.1.0
 mypy==1.7.0
+scipy>=1.10.0

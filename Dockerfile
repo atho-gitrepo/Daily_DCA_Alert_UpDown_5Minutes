@@ -1,36 +1,24 @@
-FROM python:3.11-slim-bullseye
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# ============================================================
-# ✅ Install system dependencies for scipy (Bullseye has all packages)
-# ============================================================
+# Minimal dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
-    g++ \
-    build-essential \
-    python3-dev \
-    libatlas-base-dev \
-    libblas-dev \
-    liblapack-dev \
-    libopenblas-dev \
-    libgfortran5 \
-    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# ============================================================
-# Copy requirements and install
-# ============================================================
+# Copy requirements
 COPY requirements.txt .
 
-# ✅ Install scipy with pre-built wheels when possible
-RUN pip install --no-cache-dir numpy==1.24.3
-RUN pip install --no-cache-dir scipy>=1.10.0
+# ============================================================
+# ✅ PINNED FIX: Install all pinned versions
+# ============================================================
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ============================================================
+# Force numpy to the correct version (in case any dependency tries to upgrade)
+RUN pip install --force-reinstall --no-deps numpy==1.24.3
+
 # Copy application code
-# ============================================================
 COPY . .
 
 # Create directories
