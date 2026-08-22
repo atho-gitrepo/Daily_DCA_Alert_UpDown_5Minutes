@@ -1199,28 +1199,40 @@ class ConsolidatedTrendStrategy:
         }
 
     def analyze_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Analyze data with all indicators including new features."""
+        """
+        Analyze data with all indicators including v3.3.0 features.
+
+        This now uses Indicators.calculate_all_indicators() which includes:
+        - Heikin Ashi
+        - TDI (with standardized zones)
+        - Super Bollinger Bands
+        - Divergence Detection (Bullish/Bearish)
+        - Candle Pattern Recognition (Doji, Engulfing, Hammer, Star)
+        - Support/Resistance Levels
+        - BB Squeeze Detection
+        - VWAP Integration
+        - Volume Indicators
+        """
         if df.empty:
             return df
 
         try:
             df = df.copy()
 
-            # Calculate Heikin Ashi
-            df = calculate_heikin_ashi(df)
+            # ✅ FIX: Use the full indicator suite
+            # This ensures divergence, patterns, S/R, and squeeze are calculated
+            df = Indicators.calculate_all_indicators(df)
 
-            # Calculate TDI indicators
-            df = Indicators.calculate_tdi(df)
-
-            # Calculate Bollinger Bands
-            df = Indicators.calculate_bollinger_bands(df, period=34, dev=1.750)
-
-            # Calculate additional indicators
-            if 'volume' in df.columns:
-                df['volume_sma'] = df['volume'].rolling(20).mean()
-                df['volume_ratio'] = df['volume'] / df['volume_sma']
-
+            # Drop any remaining NaN values
             df.dropna(inplace=True)
+
+            # Log what indicators were calculated
+            indicator_cols = [col for col in df.columns if col.startswith('divergence_') or
+                             col.startswith('candle_') or col.startswith('bb_squeeze_') or
+                             col == 'nearest_support' or col == 'nearest_resistance']
+            if indicator_cols:
+                strategy_logger.debug(f"{EMOJI['DEBUG']} Indicators calculated: {indicator_cols}")
+            
             return df
 
         except Exception as e:

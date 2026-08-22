@@ -553,26 +553,19 @@ def detect_candle_patterns(df: pd.DataFrame) -> Dict[str, Any]:
 def calculate_support_resistance(df: pd.DataFrame, lookback: int = 100,
                                  num_levels: int = 3) -> Dict[str, Any]:
     """
-    ✅ NEW: Calculate key support and resistance levels using pivot points.
-
-    Returns:
-        {
-            'support_levels': [float, ...],  # Nearest to farthest
-            'resistance_levels': [float, ...],
-            'nearest_support': float,
-            'nearest_resistance': float,
-            'current_price': float,
-            'position': str (ABOVE_RESISTANCE/IN_RANGE/BELOW_SUPPORT)
-        }
+    Calculate key support and resistance levels using pivot points.
+    Enhanced with fallback values when no clear pivots are found.
     """
-    if df is None or len(df) < 20:
+    if df is None or df.empty:
         return {
             'support_levels': [],
             'resistance_levels': [],
             'nearest_support': 0,
             'nearest_resistance': 0,
             'current_price': 0,
-            'position': 'UNKNOWN'
+            'position': 'UNKNOWN',
+            'distance_to_support_pct': 0,
+            'distance_to_resistance_pct': 0,
         }
 
     try:
@@ -595,37 +588,54 @@ def calculate_support_resistance(df: pd.DataFrame, lookback: int = 100,
                 lows[i] < lows[i+1] and lows[i] < lows[i+2]):
                 pivot_lows.append(lows[i])
 
-        # Remove duplicates using clustering
+        # ✅ FIX: If no pivots found, use MIN/MAX
+        if not pivot_lows and not pivot_highs:
+            support_levels = [recent_df['low'].min()]
+            resistance_levels = [recent_df['high'].max()]
+            nearest_support = recent_df['low'].min()
+            nearest_resistance = recent_df['high'].max()
+
+            if nearest_resistance > 0 and current_price > nearest_resistance:
+                position = 'ABOVE_RESISTANCE'
+            elif nearest_support > 0 and current_price < nearest_support:
+                position = 'BELOW_SUPPORT'
+            else:
+                position = 'IN_RANGE'
+
+            return {
+                'support_levels': support_levels[:num_levels],
+                'resistance_levels': resistance_levels[:num_levels],
+                'nearest_support': nearest_support,
+                'nearest_resistance': nearest_resistance,
+                'current_price': current_price,
+                'position': position,
+                'distance_to_support_pct': ((current_price - nearest_support) / current_price * 100) if nearest_support > 0 and current_price > 0 else 0,
+                'distance_to_resistance_pct': ((nearest_resistance - current_price) / current_price * 100) if nearest_resistance > 0 and current_price > 0 else 0,
+            }
+
+        # Cluster levels
         def cluster_levels(values, tolerance=0.002):
-            """Cluster similar values together."""
             if not values:
                 return []
-
             values = sorted(values)
             clusters = []
             current_cluster = [values[0]]
-
             for val in values[1:]:
                 if abs(val - current_cluster[-1]) / max(1, current_cluster[-1]) < tolerance:
                     current_cluster.append(val)
                 else:
                     clusters.append(np.mean(current_cluster))
                     current_cluster = [val]
-
             if current_cluster:
                 clusters.append(np.mean(current_cluster))
-
             return clusters
 
-        # Cluster levels
         support_levels = cluster_levels(pivot_lows)
         resistance_levels = cluster_levels(pivot_highs)
 
-        # Sort levels (nearest first)
-        support_levels = sorted(support_levels, reverse=True)  # Highest support first
-        resistance_levels = sorted(resistance_levels)  # Lowest resistance first
+        support_levels = sorted(support_levels, reverse=True)
+        resistance_levels = sorted(resistance_levels)
 
-        # Find nearest levels
         nearest_support = 0
         nearest_resistance = 0
 
@@ -639,7 +649,12 @@ def calculate_support_resistance(df: pd.DataFrame, lookback: int = 100,
                 nearest_resistance = level
                 break
 
-        # Determine position
+        # ✅ FIX: If still no levels, use MIN/MAX
+        if nearest_support == 0:
+            nearest_support = recent_df['low'].min()
+        if nearest_resistance == 0:
+            nearest_resistance = recent_df['high'].max()
+
         if nearest_resistance > 0 and current_price > nearest_resistance:
             position = 'ABOVE_RESISTANCE'
         elif nearest_support > 0 and current_price < nearest_support:
@@ -654,19 +669,36 @@ def calculate_support_resistance(df: pd.DataFrame, lookback: int = 100,
             'nearest_resistance': nearest_resistance,
             'current_price': current_price,
             'position': position,
-            'distance_to_support_pct': ((current_price - nearest_support) / current_price * 100) if nearest_support > 0 else 0,
-            'distance_to_resistance_pct': ((nearest_resistance - current_price) / current_price * 100) if nearest_resistance > 0 else 0,
+            'distance_to_support_pct': ((current_price - nearest_support) / current_price * 100) if nearest_support > 0 and current_price > 0 else 0,
+            'distance_to_resistance_pct': ((nearest_resistance - current_price) / current_price * 100) if nearest_resistance > 0 and current_price > 0 else 0,
         }
 
     except Exception as e:
         indicator_logger.error(f"{EMOJI['ERROR']} INDICATOR_SR: {e}")
+        # ✅ FIX: Return MIN/MAX on error
+        if not df.empty:
+            last_price = df['close'].iloc[-1]
+            min_price = df['low'].min()
+            max_price = df['high'].max()
+            return {
+                'support_levels': [min_price],
+                'resistance_levels': [max_price],
+                'nearest_support': min_price,
+                'nearest_resistance': max_price,
+                'current_price': last_price,
+                'position': 'IN_RANGE',
+                'distance_to_support_pct': ((last_price - min_price) / last_price * 100) if last_price > 0 else 0,
+                'distance_to_resistance_pct': ((max_price - last_price) / last_price * 100) if last_price > 0 else 0,
+            }
         return {
             'support_levels': [],
             'resistance_levels': [],
             'nearest_support': 0,
             'nearest_resistance': 0,
             'current_price': 0,
-            'position': 'UNKNOWN'
+            'position': 'UNKNOWN',
+            'distance_to_support_pct': 0,
+            'distance_to_resistance_pct': 0,
         }
 
 
