@@ -471,20 +471,42 @@ class HealthHandler(BaseHTTPRequestHandler):
         else: self.send_response(404); self.end_headers()
 
     def _handle_root(self):
-        self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers()
-        self.wfile.write(b"""
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.end_headers()
+
+        # ✅ FIXED: Use string, then encode to bytes
+        html_content = """
         <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>AI Trading Bot v3.3.0</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 40px; background: #0d1117; color: #e6edf3; }
+                h1 { color: #58a6ff; }
+                h2 { color: #f0883e; }
+                ul { list-style: none; padding: 0; }
+                li { margin: 10px 0; padding: 10px; background: #161b22; border-radius: 8px; border-left: 4px solid #58a6ff; }
+                a { color: #58a6ff; text-decoration: none; font-size: 18px; }
+                a:hover { color: #1f6feb; }
+                .version { color: #8b949e; font-size: 14px; }
+                .features { color: #f0883e; }
+            </style>
+        </head>
         <body>
             <h1>🤖 AI Trading Bot v3.3.0</h1>
             <h2>✨ New Features: Divergence, Candle Patterns, S/R, Session Filtering</h2>
             <ul>
-                <li><a href='/health'>Health Status</a></li>
-                <li><a href='/metrics'>Metrics</a></li>
-                <li><a href='/signals'>Signal Status</a></li>
+                <li><a href="/health">Health Status</a></li>
+                <li><a href="/metrics">Metrics</a></li>
+                <li><a href="/signals">Signal Status</a></li>
             </ul>
+            <p class="version">Version 3.3.0 | Super TDI Strategy</p>
         </body>
         </html>
-        """)
+        """
+    # Encode to UTF-8 bytes
+        self.wfile.write(html_content.encode('utf-8'))
 
     def _handle_health(self):
         status = get_bot_status(); is_healthy = status['status'] == 'healthy'
