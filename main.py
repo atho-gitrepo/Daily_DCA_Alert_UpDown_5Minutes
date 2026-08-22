@@ -465,15 +465,12 @@ def check_ltf_confirmation(symbol: str, direction: Optional[str], client) -> Tup
 # ✅ FIXED: fetch_multiframe_data - Correct parameters and import
 # ============================================================
 def fetch_multiframe_data(client, symbol: str) -> Optional['TimeframeData']:
-    """
-    Fetch all timeframes for day trading strategy.
-    """
+    """Fetch all timeframes for day trading strategy."""
     if not DAY_TRADING_AVAILABLE:
         main_logger.warning(f"Day trading not available for {symbol}")
         return None
 
     try:
-        # Fetch all timeframes in parallel
         from concurrent.futures import ThreadPoolExecutor
 
         def fetch_tf(interval, limit):
@@ -496,23 +493,22 @@ def fetch_multiframe_data(client, symbol: str) -> Optional['TimeframeData']:
                     main_logger.error(f"Failed to fetch {tf} for {symbol}: {e}")
                     results[tf] = None
 
-        # Check all data fetched
         if any(df is None or df.empty for df in results.values()):
             return None
 
+        # ✅ FIX: Correct field names
         return TimeframeData(
             symbol=symbol,
-            ultra_ltf_1m=results.get('1m'),
-            ltf_5m=results.get('5m'),
-            mtf_15m=results.get('15m'),
-            htf_1h=results.get('1h'),
-            ultra_htf_4h=results.get('4h'),
+            ultra_ltf_1m=results.get('1m'),    # ✅ CORRECT
+            ltf_5m=results.get('5m'),          # ✅ CORRECT
+            mtf_15m=results.get('15m'),        # ✅ CORRECT
+            htf_1h=results.get('1h'),          # ✅ CORRECT
+            ultra_htf_4h=results.get('4h'),    # ✅ CORRECT
         )
 
     except Exception as e:
         main_logger.error(f"Multi-frame fetch error for {symbol}: {e}")
         return None
-
 
 # ============================================================
 # ✅ NEW: Day Trading Symbol Processing
