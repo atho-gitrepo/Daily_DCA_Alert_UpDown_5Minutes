@@ -1,7 +1,6 @@
 """
 Configuration management for the AI Trading Bot.
-HYBRID STRATEGY: Super TDI + Super Bollinger Bands + Multi-Timeframe
-Version: 3.3.0 - ADDED: Divergence, Candle Patterns, S/R, Session Filtering config
+Version: 3.4.0 - ENHANCED: Added v3.4.0 signal engine config
 """
 
 import os
@@ -93,32 +92,82 @@ class MarketConfig:
     timeframe: str = "15m"
     htf_timeframe: str = "1h"
     ltf_timeframe: str = "5m"
+    ultra_ltf_timeframe: str = "1m"
+    ultra_htf_timeframe: str = "4h"
     polling_interval_seconds: int = 15
 
 
 @dataclass
 class StrategyConfig:
-    """Strategy configuration with new v3.3.0 features."""
+    """v3.4.0 Strategy Configuration."""
 
-    # === Super Bollinger Bands ===
-    bb_period: int = 34
-    bb_dev: float = 1.750
+    # === Signal Engine v3.4.0 ===
+    min_setup_score: int = 70
+    min_trigger_score: int = 70
+    counter_trend_min_score: int = 82
+    max_signals_per_hour: int = 2
+
+    # === Setup Expiry ===
+    setup_expiry_seconds: int = 300  # 5 minutes
+    trigger_expiry_seconds: int = 120  # 2 minutes
+
+    # === Entry Protection ===
+    max_entry_distance_atr: float = 0.25
+
+    # === ATR Risk ===
+    atr_period: int = 14
+    sl_multiplier: float = 1.5
+    tp_multiplier: float = 3.0
+
+    # === TDI Levels ===
+    tdi_oversold: float = 25.0
+    tdi_soft_buy: float = 35.0
+    tdi_soft_sell: float = 65.0
+    tdi_overbought: float = 75.0
+
+    # === Scoring Weights ===
+    score_weights: Dict[str, float] = field(default_factory=lambda: {
+        'htf_regime': 20,
+        'location': 20,
+        'momentum': 20,
+        'trigger': 25,
+        'volume': 15,
+    })
+
+    # === Grade Thresholds ===
+    grade_a_plus_threshold: int = 90
+    grade_a_threshold: int = 82
+    grade_b_plus_threshold: int = 75
+    grade_b_threshold: int = 70
+    grade_c_threshold: int = 60
+
+    # === Signal Lifecycle ===
+    symbol_cooldown_minutes: int = 30
+    break_even_threshold_minutes: int = 480  # 8 hours
+    min_bars_before_check: int = 2
+
+    # === Features ===
+    enable_divergence: bool = True
+    enable_candle_patterns: bool = True
+    enable_support_resistance: bool = True
+    enable_bb_squeeze: bool = True
+    enable_session_filtering: bool = True
+    enable_htf_regime: bool = True
+    enable_structure_analysis: bool = True
+    enable_volume_gate: bool = True
+    enable_ltf_confirmation: bool = True
 
     # === Multi-Timeframe Settings ===
-    ltf_min_confirmation: float = 0.70
     require_ltf_confirmation: bool = True
-    require_htf_alignment: bool = False
+    ltf_min_confirmation: float = 0.65
+    require_htf_alignment: bool = True
 
-    # === Leverage ===
-    default_leverage: int = 5
-    min_leverage: int = 1
-    max_leverage: int = 20
-
-    # === Risk & RRR ===
-    rrr_ratio: float = 1.5
+    # === Risk ===
+    default_rrr: float = 2.0
+    min_rrr: float = 1.5
+    max_rrr: float = 4.0
     risk_per_trade_percent: float = 0.5
     max_daily_trades: int = 5
-    max_risk_percent: float = 0.015
 
     # === AI ===
     ai_enabled: bool = True
@@ -130,58 +179,17 @@ class StrategyConfig:
 
     # === Signal Settings ===
     min_quality_score: int = 50
+    min_signal_score: int = 70
     signal_cooldown_minutes: int = 30
-    max_signals_per_hour: int = 8
     max_signals_per_cycle: int = 3
 
-    # Grade thresholds
-    grade_a_threshold: int = 80
-    grade_b_threshold: int = 70
-    grade_c_threshold: int = 60
-
-    # Signal scoring
-    min_signal_score: int = 70
-
-    # === Signal Lifecycle ===
-    symbol_cooldown_minutes: int = 30
-    break_even_threshold_minutes: int = 480
-    min_bars_before_check: int = 2
-
-    # === Use Futures ===
+    # === Leverage ===
+    default_leverage: int = 5
+    min_leverage: int = 1
+    max_leverage: int = 20
     use_futures: bool = True
 
-    # ===== NEW v3.3.0: Enhanced Features =====
-
-    # Divergence Detection
-    enable_divergence_detection: bool = True
-    divergence_lookback: int = 20
-    divergence_min_strength: float = 0.3
-
-    # Candle Pattern Recognition
-    enable_candle_patterns: bool = True
-    min_pattern_confidence: float = 0.5
-
-    # Support/Resistance
-    enable_support_resistance: bool = True
-    sr_lookback: int = 100
-    sr_num_levels: int = 3
-
-    # BB Squeeze
-    enable_bb_squeeze: bool = True
-    squeeze_threshold: float = 0.6
-        # ========== TIMEFRAME CONFIGURATION ==========
-    ULTRA_LTF_TIMEFRAME = "1m"    # Ultra-fine entry timing
-    LTF_TIMEFRAME = "5m"          # Entry confirmation
-    TIMEFRAME = "15m"             # Main decision timeframe
-    HTF_TIMEFRAME = "1h"          # Medium trend
-    ULTRA_HTF_TIMEFRAME = "4h"    # Major trend
-
-    # ========== HOLD TIME CONFIGURATION ==========
-    MAX_HOLD_MINUTES = 60         # Maximum 1 hour
-    MIN_HOLD_MINUTES = 15         # Minimum 15 minutes
-    EXIT_AT_TIME = True           # Exit at time target
-    # Session Filtering
-    enable_session_filtering: bool = True
+    # === Session Multipliers ===
     session_multipliers: Dict[str, float] = field(default_factory=lambda: {
         "ASIAN": 0.7,
         "LONDON": 1.0,
@@ -215,15 +223,6 @@ class GroqConfig:
 class TelegramConfig:
     bot_token: str = ""
     chat_id: str = ""
-    enabled: bool = False
-
-
-@dataclass
-class FirebaseConfig:
-    """Firebase configuration (kept for backward compatibility)."""
-    credentials: Optional[Dict[str, Any]] = None
-    credentials_path: Optional[Path] = None
-    database_url: str = ""
     enabled: bool = False
 
 
@@ -269,19 +268,17 @@ class DeploymentConfig:
 # ------------------- Main Config Class -------------------
 
 class Config:
-    """Complete configuration with all required attributes."""
+    """Complete configuration with v3.4.0 support."""
 
-    VERSION = "3.3.0"
+    VERSION = "3.4.0"
 
     def __init__(self):
-        # Initialize all config sections
         self.binance = BinanceConfig()
         self.market = MarketConfig()
         self.strategy = StrategyConfig()
         self.performance = PerformanceConfig()
         self.groq = GroqConfig()
         self.telegram = TelegramConfig()
-        self.firebase = FirebaseConfig()
         self.mongodb = MongoDBConfig()
         self.logging = LoggingConfig()
         self.deployment = DeploymentConfig()
@@ -290,18 +287,14 @@ class Config:
         self._validate()
         self._setup_directories()
 
-        logger.info(f"Config initialized (v{self.VERSION}, environment: {self.deployment.environment.value})")
-        logger.info(f"✅ Grade thresholds: A={self.strategy.grade_a_threshold}, B={self.strategy.grade_b_threshold}, C={self.strategy.grade_c_threshold}")
-        logger.info(f"✅ Min Signal Score: {self.strategy.min_signal_score}/100")
-        logger.info(f"✅ Max Daily Trades: {self.strategy.max_daily_trades}")
-        logger.info(f"✅ Cache enabled: {self.performance.cache_enabled}")
-        logger.info(f"✅ MongoDB enabled: {self.mongodb.enabled}")
-        # NEW v3.3.0
-        logger.info(f"✅ Divergence Detection: {self.strategy.enable_divergence_detection}")
-        logger.info(f"✅ Candle Patterns: {self.strategy.enable_candle_patterns}")
-        logger.info(f"✅ Support/Resistance: {self.strategy.enable_support_resistance}")
-        logger.info(f"✅ BB Squeeze: {self.strategy.enable_bb_squeeze}")
-        logger.info(f"✅ Session Filtering: {self.strategy.enable_session_filtering}")
+        logger.info(f"Config initialized v{self.VERSION}")
+        logger.info(f"✅ v3.4.0 Features enabled:")
+        logger.info(f"  - Min Setup Score: {self.strategy.min_setup_score}")
+        logger.info(f"  - Min Trigger Score: {self.strategy.min_trigger_score}")
+        logger.info(f"  - Counter-Trend Min: {self.strategy.counter_trend_min_score}")
+        logger.info(f"  - Max Entry Distance: {self.strategy.max_entry_distance_atr} ATR")
+        logger.info(f"  - Grade A: {self.strategy.grade_a_threshold}+")
+        logger.info(f"  - Grade A+: {self.strategy.grade_a_plus_threshold}+")
 
     def _load_from_env(self):
         # ====== BINANCE ======
@@ -316,62 +309,71 @@ class Config:
         )
 
         # ====== MARKET ======
-        default_symbols = [
-            "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT",
-            "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "LTCUSDT"
-        ]
-
+        default_symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
         self.market = MarketConfig(
             quote_asset=os.getenv("QUOTE_ASSET", "USDT"),
             symbols=safe_list_env("SYMBOLS", default_symbols),
             timeframe=os.getenv("TIMEFRAME", "15m"),
             htf_timeframe=os.getenv("HTF_TIMEFRAME", "1h"),
             ltf_timeframe=os.getenv("LTF_TIMEFRAME", "5m"),
+            ultra_ltf_timeframe=os.getenv("ULTRA_LTF_TIMEFRAME", "1m"),
+            ultra_htf_timeframe=os.getenv("ULTRA_HTF_TIMEFRAME", "4h"),
             polling_interval_seconds=safe_int_env("POLLING_INTERVAL_SECONDS", 15, min_val=1, max_val=60),
         )
 
-        # ====== STRATEGY ======
+        # ====== STRATEGY v3.4.0 ======
         self.strategy = StrategyConfig(
-            bb_period=safe_int_env("BB_PERIOD", 34, min_val=5, max_val=50),
-            bb_dev=safe_float_env("BB_DEV", 1.750, min_val=0.5, max_val=4.0),
-            ltf_min_confirmation=safe_float_env("LTF_MIN_CONFIRMATION", 0.70, min_val=0.3, max_val=0.9),
+            min_setup_score=safe_int_env("MIN_SETUP_SCORE", 70, min_val=50, max_val=90),
+            min_trigger_score=safe_int_env("MIN_TRIGGER_SCORE", 70, min_val=50, max_val=90),
+            counter_trend_min_score=safe_int_env("COUNTER_TREND_MIN_SCORE", 82, min_val=70, max_val=95),
+            max_signals_per_hour=safe_int_env("MAX_SIGNALS_PER_HOUR", 2, min_val=1, max_val=10),
+            setup_expiry_seconds=safe_int_env("SETUP_EXPIRY_SECONDS", 300, min_val=60, max_val=600),
+            trigger_expiry_seconds=safe_int_env("TRIGGER_EXPIRY_SECONDS", 120, min_val=30, max_val=300),
+            max_entry_distance_atr=safe_float_env("MAX_ENTRY_DISTANCE_ATR", 0.25, min_val=0.05, max_val=0.75),
+            atr_period=safe_int_env("ATR_PERIOD", 14, min_val=5, max_val=30),
+            sl_multiplier=safe_float_env("SL_MULTIPLIER", 1.5, min_val=0.5, max_val=3.0),
+            tp_multiplier=safe_float_env("TP_MULTIPLIER", 3.0, min_val=1.0, max_val=5.0),
+            tdi_oversold=safe_float_env("TDI_OVERSOLD", 25.0, min_val=15, max_val=35),
+            tdi_soft_buy=safe_float_env("TDI_SOFT_BUY", 35.0, min_val=25, max_val=45),
+            tdi_soft_sell=safe_float_env("TDI_SOFT_SELL", 65.0, min_val=55, max_val=75),
+            tdi_overbought=safe_float_env("TDI_OVERBOUGHT", 75.0, min_val=65, max_val=85),
+            grade_a_plus_threshold=safe_int_env("GRADE_A_PLUS_THRESHOLD", 90, min_val=80, max_val=98),
+            grade_a_threshold=safe_int_env("GRADE_A_THRESHOLD", 82, min_val=70, max_val=95),
+            grade_b_plus_threshold=safe_int_env("GRADE_B_PLUS_THRESHOLD", 75, min_val=65, max_val=85),
+            grade_b_threshold=safe_int_env("GRADE_B_THRESHOLD", 70, min_val=60, max_val=80),
+            grade_c_threshold=safe_int_env("GRADE_C_THRESHOLD", 60, min_val=50, max_val=75),
+            symbol_cooldown_minutes=safe_int_env("SYMBOL_COOLDOWN_MINUTES", 30, min_val=5, max_val=120),
+            break_even_threshold_minutes=safe_int_env("BREAK_EVEN_THRESHOLD_MINUTES", 480, min_val=30, max_val=720),
+            min_bars_before_check=safe_int_env("MIN_BARS_BEFORE_CHECK", 2, min_val=1, max_val=5),
+            enable_divergence=safe_bool_env("ENABLE_DIVERGENCE", True),
+            enable_candle_patterns=safe_bool_env("ENABLE_CANDLE_PATTERNS", True),
+            enable_support_resistance=safe_bool_env("ENABLE_SR", True),
+            enable_bb_squeeze=safe_bool_env("ENABLE_BB_SQUEEZE", True),
+            enable_session_filtering=safe_bool_env("ENABLE_SESSION_FILTERING", True),
+            enable_htf_regime=safe_bool_env("ENABLE_HTF_REGIME", True),
+            enable_structure_analysis=safe_bool_env("ENABLE_STRUCTURE_ANALYSIS", True),
+            enable_volume_gate=safe_bool_env("ENABLE_VOLUME_GATE", True),
+            enable_ltf_confirmation=safe_bool_env("ENABLE_LTF_CONFIRMATION", True),
             require_ltf_confirmation=safe_bool_env("REQUIRE_LTF_CONFIRMATION", True),
-            require_htf_alignment=safe_bool_env("REQUIRE_HTF_ALIGNMENT", False),
-            default_leverage=safe_int_env("DEFAULT_LEVERAGE", 5, min_val=1, max_val=50),
-            min_leverage=safe_int_env("MIN_LEVERAGE", 1, min_val=1, max_val=10),
-            max_leverage=safe_int_env("MAX_LEVERAGE", 20, min_val=1, max_val=100),
-            rrr_ratio=safe_float_env("RRR_RATIO", 1.5, min_val=0.5, max_val=5.0),
+            ltf_min_confirmation=safe_float_env("LTF_MIN_CONFIRMATION", 0.65, min_val=0.4, max_val=0.9),
+            require_htf_alignment=safe_bool_env("REQUIRE_HTF_ALIGNMENT", True),
+            default_rrr=safe_float_env("DEFAULT_RRR", 2.0, min_val=1.0, max_val=5.0),
+            min_rrr=safe_float_env("MIN_RRR", 1.5, min_val=1.0, max_val=3.0),
+            max_rrr=safe_float_env("MAX_RRR", 4.0, min_val=2.0, max_val=6.0),
             risk_per_trade_percent=safe_float_env("RISK_PER_TRADE_PERCENT", 0.5, min_val=0.01, max_val=5.0),
             max_daily_trades=safe_int_env("MAX_DAILY_TRADES", 5, min_val=1, max_val=30),
-            max_risk_percent=safe_float_env("MAX_RISK_PERCENT", 0.015, min_val=0.001, max_val=0.05),
             ai_enabled=safe_bool_env("AI_ENABLED", True),
             ai_min_interval_seconds=safe_int_env("AI_MIN_INTERVAL_SECONDS", 120, min_val=30, max_val=600),
             ai_cache_ttl=safe_int_env("AI_CACHE_TTL", 600, min_val=60, max_val=3600),
             fee_impact=safe_float_env("FEE_IMPACT", 0.0011, min_val=0.0005, max_val=0.005),
             min_quality_score=safe_int_env("MIN_QUALITY_SCORE", 50, min_val=30, max_val=90),
-            signal_cooldown_minutes=safe_int_env("SIGNAL_COOLDOWN_MINUTES", 30, min_val=1, max_val=60),
-            max_signals_per_hour=safe_int_env("MAX_SIGNALS_PER_HOUR", 8, min_val=1, max_val=30),
-            max_signals_per_cycle=safe_int_env("MAX_SIGNALS_PER_CYCLE", 3, min_val=1, max_val=10),
-            grade_a_threshold=safe_int_env("GRADE_A_THRESHOLD", 80, min_val=70, max_val=95),
-            grade_b_threshold=safe_int_env("GRADE_B_THRESHOLD", 70, min_val=60, max_val=85),
-            grade_c_threshold=safe_int_env("GRADE_C_THRESHOLD", 60, min_val=50, max_val=75),
             min_signal_score=safe_int_env("MIN_SIGNAL_SCORE", 70, min_val=40, max_val=95),
-            symbol_cooldown_minutes=safe_int_env("SYMBOL_COOLDOWN_MINUTES", 30, min_val=5, max_val=120),
-            break_even_threshold_minutes=safe_int_env("BREAK_EVEN_THRESHOLD_MINUTES", 480, min_val=30, max_val=720),
-            min_bars_before_check=safe_int_env("MIN_BARS_BEFORE_CHECK", 2, min_val=1, max_val=5),
+            signal_cooldown_minutes=safe_int_env("SIGNAL_COOLDOWN_MINUTES", 30, min_val=1, max_val=60),
+            max_signals_per_cycle=safe_int_env("MAX_SIGNALS_PER_CYCLE", 3, min_val=1, max_val=10),
+            default_leverage=safe_int_env("DEFAULT_LEVERAGE", 5, min_val=1, max_val=50),
+            min_leverage=safe_int_env("MIN_LEVERAGE", 1, min_val=1, max_val=10),
+            max_leverage=safe_int_env("MAX_LEVERAGE", 20, min_val=1, max_val=100),
             use_futures=safe_bool_env("USE_FUTURES", True),
-            # NEW v3.3.0
-            enable_divergence_detection=safe_bool_env("ENABLE_DIVERGENCE", True),
-            divergence_lookback=safe_int_env("DIVERGENCE_LOOKBACK", 20, min_val=10, max_val=50),
-            divergence_min_strength=safe_float_env("DIVERGENCE_MIN_STRENGTH", 0.3, min_val=0.1, max_val=0.9),
-            enable_candle_patterns=safe_bool_env("ENABLE_CANDLE_PATTERNS", True),
-            min_pattern_confidence=safe_float_env("MIN_PATTERN_CONFIDENCE", 0.5, min_val=0.3, max_val=0.9),
-            enable_support_resistance=safe_bool_env("ENABLE_SR", True),
-            sr_lookback=safe_int_env("SR_LOOKBACK", 100, min_val=50, max_val=200),
-            sr_num_levels=safe_int_env("SR_NUM_LEVELS", 3, min_val=1, max_val=5),
-            enable_bb_squeeze=safe_bool_env("ENABLE_BB_SQUEEZE", True),
-            squeeze_threshold=safe_float_env("SQUEEZE_THRESHOLD", 0.6, min_val=0.3, max_val=0.9),
-            enable_session_filtering=safe_bool_env("ENABLE_SESSION_FILTERING", True),
             session_multipliers={
                 "ASIAN": safe_float_env("SESSION_ASIAN_MULTIPLIER", 0.7, min_val=0.3, max_val=1.0),
                 "LONDON": safe_float_env("SESSION_LONDON_MULTIPLIER", 1.0, min_val=0.5, max_val=1.5),
@@ -392,7 +394,7 @@ class Config:
             batch_size=safe_int_env("BATCH_SIZE", 100, min_val=10, max_val=1000),
         )
 
-        # ====== GROQ / AI ======
+        # ====== GROQ ======
         self.groq = GroqConfig(
             api_key=os.getenv("GROQ_API_KEY", ""),
             model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
@@ -405,15 +407,6 @@ class Config:
             bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
             enabled=bool(os.getenv("TELEGRAM_BOT_TOKEN", "")),
-        )
-
-        # ====== FIREBASE ======
-        creds = self._parse_firebase_credentials()
-        self.firebase = FirebaseConfig(
-            credentials=creds,
-            credentials_path=Path(os.getenv("FIREBASE_CREDENTIALS_PATH")) if os.getenv("FIREBASE_CREDENTIALS_PATH") else None,
-            database_url=os.getenv("FIREBASE_DATABASE_URL", ""),
-            enabled=creds is not None,
         )
 
         # ====== MONGODB ======
@@ -431,14 +424,12 @@ class Config:
         try:
             environment = Environment(env_str)
         except ValueError:
-            logger.warning(f"Invalid environment '{env_str}', using DEVELOPMENT")
             environment = Environment.DEVELOPMENT
 
         run_mode_str = os.getenv("RUN_MODE", "DEMO").upper().strip()
         try:
             run_mode = RunMode(run_mode_str)
         except ValueError:
-            logger.warning(f"Invalid run mode '{run_mode_str}', using DEMO")
             run_mode = RunMode.DEMO
 
         self.deployment = DeploymentConfig(
@@ -448,43 +439,6 @@ class Config:
             port=safe_int_env("PORT", 8080, min_val=1024, max_val=65535),
             host=os.getenv("HOST", "0.0.0.0"),
         )
-
-    def _parse_firebase_credentials(self) -> Optional[Dict[str, Any]]:
-        """Parse Firebase credentials."""
-        json_str = os.getenv("FIREBASE_CREDENTIALS_JSON")
-        if json_str:
-            try:
-                json_str = json_str.strip()
-                credentials = json.loads(json_str)
-                required_fields = ["type", "project_id", "private_key", "client_email"]
-                missing_fields = [field for field in required_fields if field not in credentials]
-                if missing_fields:
-                    logger.error(f"Firebase credentials JSON missing required fields: {missing_fields}")
-                    return None
-                logger.info("Firebase credentials loaded from JSON string")
-                return credentials
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse FIREBASE_CREDENTIALS_JSON: {e}")
-                return None
-            except Exception as e:
-                logger.error(f"Error loading Firebase credentials from JSON: {e}")
-                return None
-
-        cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
-        if cred_path:
-            try:
-                path = Path(cred_path)
-                if path.exists() and path.is_file():
-                    with open(path, 'r') as f:
-                        credentials = json.load(f)
-                    logger.info(f"Firebase credentials loaded from file: {cred_path}")
-                    return credentials
-                else:
-                    logger.warning(f"Firebase credentials file not found: {cred_path}")
-            except Exception as e:
-                logger.error(f"Error loading Firebase credentials from file: {e}")
-
-        return None
 
     def _load_mongodb_config(self) -> MongoDBConfig:
         """Load MongoDB configuration from environment variables."""
@@ -505,11 +459,6 @@ class Config:
                 mongodb_uri = f"mongodb://{host}:{port}/{db_name}"
 
         enabled = bool(mongodb_uri)
-
-        if enabled:
-            logger.info("MongoDB configuration loaded from environment")
-        else:
-            logger.debug("MongoDB not configured - using in-memory only")
 
         return MongoDBConfig(
             uri=mongodb_uri,
@@ -554,27 +503,8 @@ class Config:
         if self.strategy.min_signal_score > self.strategy.grade_b_threshold:
             warnings.append(f"MIN_SIGNAL_SCORE ({self.strategy.min_signal_score}) is above GRADE_B_THRESHOLD ({self.strategy.grade_b_threshold})")
 
-        if self.strategy.rrr_ratio < 1.0:
-            warnings.append(f"RRR_RATIO ({self.strategy.rrr_ratio}) below 1.0")
-
-        if self.strategy.min_leverage > self.strategy.max_leverage:
-            warnings.append(f"MIN_LEVERAGE ({self.strategy.min_leverage}) > MAX_LEVERAGE ({self.strategy.max_leverage})")
-        if self.strategy.default_leverage > self.strategy.max_leverage:
-            warnings.append(f"DEFAULT_LEVERAGE ({self.strategy.default_leverage}) exceeds MAX_LEVERAGE ({self.strategy.max_leverage})")
-
-        # MongoDB validation
-        if self.mongodb.enabled:
-            if not self.mongodb.uri:
-                warnings.append("MongoDB enabled but URI is empty - check MONGODB_URI environment variable")
-
-        # NEW v3.3.0 validation
-        if self.strategy.enable_divergence_detection and self.strategy.divergence_lookback < 10:
-            warnings.append(f"DIVERGENCE_LOOKBACK ({self.strategy.divergence_lookback}) is very low")
-
-        if self.strategy.enable_session_filtering:
-            for session, multiplier in self.strategy.session_multipliers.items():
-                if multiplier < 0.3 or multiplier > 1.5:
-                    warnings.append(f"SESSION_MULTIPLIER for {session} ({multiplier}) outside recommended range (0.3-1.5)")
+        if self.strategy.min_rrr < 1.0:
+            warnings.append(f"MIN_RRR ({self.strategy.min_rrr}) below 1.0")
 
         for warning in warnings:
             logger.warning(f"Configuration warning: {warning}")
@@ -602,71 +532,19 @@ class Config:
         return self.deployment.run_mode == RunMode.BACKTEST
 
     def get_grade(self, score: int) -> str:
-        if score >= self.strategy.grade_a_threshold:
+        """Get grade based on v3.4.0 thresholds."""
+        if score >= self.strategy.grade_a_plus_threshold:
+            return "A+"
+        elif score >= self.strategy.grade_a_threshold:
             return "A"
+        elif score >= self.strategy.grade_b_plus_threshold:
+            return "B+"
         elif score >= self.strategy.grade_b_threshold:
             return "B"
         elif score >= self.strategy.grade_c_threshold:
             return "C"
         else:
             return "D"
-
-    def get_timeframes(self) -> Dict[str, str]:
-        return {
-            "htf": self.market.htf_timeframe,
-            "mtf": self.market.timeframe,
-            "ltf": self.market.ltf_timeframe,
-        }
-
-    def get_rrr_config(self) -> Dict[str, float]:
-        return {"rrr": self.strategy.rrr_ratio}
-
-    def get_signal_config(self) -> Dict[str, Any]:
-        return {
-            "min_quality_score": self.strategy.min_quality_score,
-            "min_signal_score": self.strategy.min_signal_score,
-            "signal_cooldown_minutes": self.strategy.signal_cooldown_minutes,
-            "max_signals_per_hour": self.strategy.max_signals_per_hour,
-            "max_signals_per_cycle": self.strategy.max_signals_per_cycle,
-            "max_daily_trades": self.strategy.max_daily_trades,
-            "require_ltf_confirmation": self.strategy.require_ltf_confirmation,
-            "require_htf_alignment": self.strategy.require_htf_alignment,
-            "ltf_min_confirmation": self.strategy.ltf_min_confirmation,
-            "break_even_threshold_minutes": self.strategy.break_even_threshold_minutes,
-            "min_bars_before_check": self.strategy.min_bars_before_check,
-            "grade_a_threshold": self.strategy.grade_a_threshold,
-            "grade_b_threshold": self.strategy.grade_b_threshold,
-            "grade_c_threshold": self.strategy.grade_c_threshold,
-            # NEW v3.3.0
-            "enable_divergence_detection": self.strategy.enable_divergence_detection,
-            "enable_candle_patterns": self.strategy.enable_candle_patterns,
-            "enable_support_resistance": self.strategy.enable_support_resistance,
-            "enable_bb_squeeze": self.strategy.enable_bb_squeeze,
-            "enable_session_filtering": self.strategy.enable_session_filtering,
-        }
-
-    def get_leverage_config(self) -> Dict[str, Any]:
-        return {
-            "default": self.strategy.default_leverage,
-            "min": self.strategy.min_leverage,
-            "max": self.strategy.max_leverage,
-        }
-
-    def get_mongodb_config(self) -> Dict[str, Any]:
-        """Get MongoDB configuration as dict."""
-        return {
-            "uri": self.mongodb.uri,
-            "db_name": self.mongodb.db_name,
-            "active_collection": self.mongodb.active_collection,
-            "resolved_collection": self.mongodb.resolved_collection,
-            "archive_collection": self.mongodb.archive_collection,
-            "enabled": self.mongodb.enabled,
-            "max_pool_size": self.mongodb.max_pool_size,
-            "min_pool_size": self.mongodb.min_pool_size,
-            "connect_timeout_ms": self.mongodb.connect_timeout_ms,
-            "socket_timeout_ms": self.mongodb.socket_timeout_ms,
-            "server_selection_timeout_ms": self.mongodb.server_selection_timeout_ms,
-        }
 
 
 # ------------------- Singleton Instance -------------------
@@ -679,67 +557,6 @@ TIMEFRAME = config.market.timeframe
 HTF_TIMEFRAME = config.market.htf_timeframe
 LTF_TIMEFRAME = config.market.ltf_timeframe
 
-ENVIRONMENT = config.deployment.environment.value
-RUN_MODE = config.deployment.run_mode.value
-DEMO_MODE = config.is_demo()
-LOG_LEVEL = config.logging.level
-
-# Strategy exports
-BB_PERIOD = config.strategy.bb_period
-BB_DEV = config.strategy.bb_dev
-LTF_MIN_CONFIRMATION = config.strategy.ltf_min_confirmation
-REQUIRE_LTF_CONFIRMATION = config.strategy.require_ltf_confirmation
-REQUIRE_HTF_ALIGNMENT = config.strategy.require_htf_alignment
-
-# Leverage exports
-DEFAULT_LEVERAGE = config.strategy.default_leverage
-MIN_LEVERAGE = config.strategy.min_leverage
-MAX_LEVERAGE = config.strategy.max_leverage
-
-# Risk exports
-RRR_RATIO = config.strategy.rrr_ratio
-RISK_PER_TRADE_PERCENT = config.strategy.risk_per_trade_percent
-MAX_DAILY_TRADES = config.strategy.max_daily_trades
-MAX_RISK_PERCENT = config.strategy.max_risk_percent
-
-# Grade exports
-GRADE_A_THRESHOLD = config.strategy.grade_a_threshold
-GRADE_B_THRESHOLD = config.strategy.grade_b_threshold
-GRADE_C_THRESHOLD = config.strategy.grade_c_threshold
-MIN_SIGNAL_SCORE = config.strategy.min_signal_score
-
-# AI exports
-AI_ENABLED = config.strategy.ai_enabled
-AI_MIN_INTERVAL_SECONDS = config.strategy.ai_min_interval_seconds
-AI_CACHE_TTL = config.strategy.ai_cache_ttl
-
-# Fee export
-FEE_IMPACT = config.strategy.fee_impact
-
-# Performance exports
-CACHE_ENABLED = config.performance.cache_enabled
-CACHE_TTL_SECONDS = config.performance.cache_ttl_seconds
-CACHE_MAX_SIZE = config.performance.cache_max_size
-
-# Signal lifecycle exports
-BREAK_EVEN_THRESHOLD_MINUTES = config.strategy.break_even_threshold_minutes
-
-# Firebase (kept for backward compatibility)
-FIREBASE_ENABLED = config.firebase.enabled
-
-# MongoDB exports
-MONGODB_ENABLED = config.mongodb.enabled
-MONGODB_URI = config.mongodb.uri
-MONGODB_DB = config.mongodb.db_name
-
-# NEW v3.3.0 exports
-ENABLE_DIVERGENCE = config.strategy.enable_divergence_detection
-ENABLE_CANDLE_PATTERNS = config.strategy.enable_candle_patterns
-ENABLE_SR = config.strategy.enable_support_resistance
-ENABLE_BB_SQUEEZE = config.strategy.enable_bb_squeeze
-ENABLE_SESSION_FILTERING = config.strategy.enable_session_filtering
-SESSION_MULTIPLIERS = config.strategy.session_multipliers
-
 __all__ = [
     "config",
     "Config",
@@ -749,43 +566,4 @@ __all__ = [
     "TIMEFRAME",
     "HTF_TIMEFRAME",
     "LTF_TIMEFRAME",
-    "ENVIRONMENT",
-    "RUN_MODE",
-    "DEMO_MODE",
-    "LOG_LEVEL",
-    "BB_PERIOD",
-    "BB_DEV",
-    "LTF_MIN_CONFIRMATION",
-    "REQUIRE_LTF_CONFIRMATION",
-    "REQUIRE_HTF_ALIGNMENT",
-    "DEFAULT_LEVERAGE",
-    "MIN_LEVERAGE",
-    "MAX_LEVERAGE",
-    "RRR_RATIO",
-    "RISK_PER_TRADE_PERCENT",
-    "MAX_DAILY_TRADES",
-    "MAX_RISK_PERCENT",
-    "GRADE_A_THRESHOLD",
-    "GRADE_B_THRESHOLD",
-    "GRADE_C_THRESHOLD",
-    "MIN_SIGNAL_SCORE",
-    "AI_ENABLED",
-    "AI_MIN_INTERVAL_SECONDS",
-    "AI_CACHE_TTL",
-    "FEE_IMPACT",
-    "CACHE_ENABLED",
-    "CACHE_TTL_SECONDS",
-    "CACHE_MAX_SIZE",
-    "BREAK_EVEN_THRESHOLD_MINUTES",
-    "FIREBASE_ENABLED",
-    "MONGODB_ENABLED",
-    "MONGODB_URI",
-    "MONGODB_DB",
-    # NEW v3.3.0
-    "ENABLE_DIVERGENCE",
-    "ENABLE_CANDLE_PATTERNS",
-    "ENABLE_SR",
-    "ENABLE_BB_SQUEEZE",
-    "ENABLE_SESSION_FILTERING",
-    "SESSION_MULTIPLIERS",
 ]
