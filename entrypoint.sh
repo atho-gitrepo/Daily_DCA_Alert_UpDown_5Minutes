@@ -40,7 +40,7 @@ if [ ${#missing_vars[@]} -gt 0 ]; then
     for var in "${missing_vars[@]}"; do
         echo "   - ${var}"
     done
-    
+
     # In production, fail hard. In development, continue with warnings.
     if [ "${ENVIRONMENT:-development}" = "production" ]; then
         echo "❌ Production environment requires all variables. Exiting."
@@ -85,4 +85,4 @@ echo "🚀 Starting Trading Bot..."
 echo "============================================================"
 
 # Run the main application
-exec python -u main.py
+exec python -u main_v34.py
