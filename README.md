@@ -1,751 +1,520 @@
-Key Adjustments Summary
-
-Before deploying, ensure these environment variables are set:
-
-Required Environment Variables:
-
-```bash
-# Binance API (Required for production)
-BINANCE_API_KEY=your_api_key
-BINANCE_API_SECRET=your_api_secret
-
-# Telegram (Optional but recommended)
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_CHAT_ID=your_telegram_chat_id
-
-# Groq AI (Optional for AI analysis)
-GROQ_API_KEY=your_groq_api_key
-
-# Firebase (Optional for persistence)
-FIREBASE_CREDENTIALS_JSON='{"type":"service_account",...}'
-FIREBASE_DATABASE_URL=your_firebase_db_url
-```
-
-Optional Configuration Adjustments:
-
-```bash
-# Strategy Settings
-DEFAULT_RRR=2.0              # Default Risk/Reward Ratio
-MIN_RRR=1.0                  # Minimum RRR
-MAX_RRR=4.0                  # Maximum RRR
-TARGET_RRR=2.5               # Target RRR for quality signals
-MIN_QUALITY_SCORE=60         # Minimum quality score (0-100)
-CONFIDENCE_THRESHOLD=0.60    # Minimum confidence threshold
-
-# Signal Lifecycle
-SYMBOL_COOLDOWN_MINUTES=30   # Cooldown between signals per symbol
-SIGNAL_EXPIRY_HOURS=12       # Signal expiry time
-BREAK_EVEN_THRESHOLD_MINUTES=240  # Time before break-even check
-
-# AI Settings
-AI_MIN_INTERVAL_SECONDS=120  # AI cooldown per symbol
-AI_OVERRIDE_QUALITY_THRESHOLD=80  # Quality to override AI conflicts
-
-# Timeframes
-TIMEFRAME=15m                # Main timeframe
-HTF_TIMEFRAME=1h            # Higher timeframe for trend
-LTF_TIMEFRAME=5m            # Lower timeframe for entry
-```
-
----
-
-README.md
+# README.md
 
 ```markdown
-# 🤖 AI-Powered Trading Bot - Hybrid Strategy
+# 🤖 AI Trading Bot v3.4.0
 
-[![Python Version](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-3.1.0-green.svg)](https://github.com/yourusername/trading-bot)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+**Advanced Multi-Timeframe Trading Bot with Signal State Machine**
 
-> **Advanced AI-Powered Trading Bot with Hybrid Strategy**: Smart Money Concepts + TDI + Bollinger Bands + Liquidity Sweep + MSS + FVG + HTF Validation
-
----
-
-## 🚀 Features
-
-### Core Strategy
-- **Hybrid Approach**: Combines multiple proven trading strategies
-- **Smart Money Concepts**: Liquidity Sweep, Market Structure Shift (MSS), Fair Value Gap (FVG)
-- **Technical Analysis**: TDI (Trade Dynamic Index), Super Bollinger Bands, Heikin Ashi
-- **Multi-Timeframe Analysis**: HTF (1h) trend validation + LTF (5m) entry timing
-- **Dynamic RRR**: Risk/Reward ratio adjusts based on signal quality
-
-### AI Integration
-- **Groq AI Integration**: Advanced signal validation and analysis
-- **Conflict Detection**: Intelligent handling of conflicting signals
-- **Smart Reasoning**: Complete AI reasoning displayed in signals
-- **Dynamic RRR Suggestion**: AI recommends optimal RRR based on market conditions
-
-### Trading Features
-- **Multiple Symbols**: Support for 20+ cryptocurrency pairs
-- **Demo/Live Modes**: Test in demo mode before going live
-- **Telegram Notifications**: Real-time signal alerts with complete analysis
-- **Firebase Persistence**: Signal storage and recovery across restarts
-- **Health Monitoring**: Built-in health check and metrics endpoints
-
-### Risk Management
-- **Dynamic Position Sizing**: Adjusts based on signal quality
-- **Stop Loss/Take Profit**: Calculated from market structure
-- **Fee Optimization**: Accounts for trading fees in calculations
-- **Max Active Signals**: Configurable limit to manage risk
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
+[![Binance](https://img.shields.io/badge/Binance-Futures-yellow.svg)](https://www.binance.com/)
+[![Version](https://img.shields.io/badge/Version-3.4.0-green.svg)]()
 
 ---
 
-## 📊 Strategy Overview
+## 📋 Table of Contents
 
-### Entry Conditions
-1. **TDI Zones**:
-   - Hard Buy: TDI ≤ 25
-   - Soft Buy: TDI ≤ 35
-   - No Trade: TDI 50-65
-   - Soft Sell: TDI ≥ 60
-   - Hard Sell: TDI ≥ 65
-
-2. **BB Touch + Rejection**:
-   - Price touches BB extremes
-   - Reversal confirmation (smaller candles)
-   - Volume confirmation
-
-3. **Smart Money Confirmation**:
-   - Market Structure Shift (MSS)
-   - Liquidity Sweep detection
-   - Fair Value Gap (FVG) detection
-
-4. **Multi-Timeframe Alignment**:
-   - HTF (1h) trend alignment
-   - LTF (5m) entry confirmation
-
-### Signal Quality Scoring
-| Score Range | Quality | RRR Range | Action |
-|-------------|---------|-----------|--------|
-| 90-100 | Excellent | 3.0-4.0 | Strong Buy/Sell |
-| 70-89 | Good | 2.0-3.0 | Confident Entry |
-| 60-69 | Fair | 1.5-2.0 | Cautious Entry |
-| <60 | Poor | <1.5 | Reject/Wait |
+- [Overview](#-overview)
+- [Key Features](#-key-features)
+- [Architecture](#-architecture)
+- [Installation](#-installation)
+- [Configuration](#-configuration)
+- [Running the Bot](#-running-the-bot)
+- [Signal Flow](#-signal-flow)
+- [Monitoring](#-monitoring)
+- [Troubleshooting](#-troubleshooting)
+- [Version History](#-version-history)
 
 ---
 
-## 🔧 Installation
+## 🚀 Overview
+
+The AI Trading Bot v3.4.0 is a sophisticated algorithmic trading system designed for Binance Futures. It implements a **multi-timeframe strategy** with a **state machine architecture** that separates setup detection from signal execution, ensuring high-quality entries with proper confirmation.
+
+### Core Philosophy
+
+> **"A setup is not a signal. A signal requires a setup + trigger + confirmation + timely entry."**
+
+---
+
+## ✨ Key Features
+
+### v3.4.0 Major Improvements
+
+| # | Feature | Description |
+|---|---------|-------------|
+| 1 | **Setup ≠ Signal** | Separates setup detection from entry trigger - prevents premature entries |
+| 2 | **HTF Regime Filter** | 4H/1H controls directional bias - reduces counter-trend losses |
+| 3 | **TDI Cross + Slope** | Uses Fast/Slow cross and slope, not zone alone - better timing |
+| 4 | **Market Structure** | BOS/CHoCH/reclaim/sweep logic - confirms actual reversal |
+| 5 | **5M Entry Trigger** | Requires 5M confirmation candle - more precise entries |
+| 6 | **Volume Gate** | Volume as confirmation/validation - reduces weak reversals |
+| 7 | **Signal State Machine** | SETUP → ARMED → TRIGGER → CONFIRMED - prevents inconsistent signals |
+| 8 | **Entry Freshness** | Expires stale setups/signals - prevents late entries |
+| 9 | **Entry Distance** | Rejects entries too far from ideal price - prevents chasing |
+| 10 | **ATR Risk Model** | ATR-based SL/TP and entry distance - adapts to volatility |
+
+### Technical Indicators
+
+- **TDI** (Traders Dynamic Index) - Fast/Slow MA crossover with slope detection
+- **Super Bollinger Bands** - 34-period, 1.750 deviation
+- **Heikin Ashi** - Smoothed candle patterns
+- **Divergence Detection** - Bullish/Bearish price-TDI divergence
+- **Candle Patterns** - Doji, Engulfing, Hammer, Morning/Evening Star
+- **Support/Resistance** - Dynamic S/R level detection
+- **BB Squeeze** - Low volatility breakout detection
+- **VWAP** - Volume Weighted Average Price
+- **ADX/DI** - Trend strength measurement
+
+---
+
+## 🏗️ Architecture
+
+### Signal State Machine
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     SIGNAL LIFECYCLE                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  NO_SETUP ──▶ SETUP_DETECTED ──▶ ARMED ──▶ TRIGGER_DETECTED    │
+│                    │                    │            │          │
+│                    ▼                    ▼            ▼          │
+│              EXPIRED              INVALIDATED   CONFIRMING     │
+│                                                        │       │
+│                                                        ▼       │
+│                                              SIGNAL_READY      │
+│                                                    │          │
+│                                                    ▼          │
+│                                              ENTRY_VALID       │
+│                                                    │          │
+│                                                    ▼          │
+│                                              ACTIVE            │
+│                                                    │          │
+│                                    ┌───────────────┼──────────┤
+│                                    ▼               ▼          ▼
+│                              TP1_HIT         TP2_HIT    SL_HIT │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Multi-Timeframe Responsibilities
+
+| Timeframe | Responsibility | Inputs | Must NOT Do |
+|-----------|---------------|--------|-------------|
+| **4H** | Market Regime | Trend, Structure, ADX | Entry |
+| **1H** | Directional Bias | Trend, Structure, VWAP | Entry |
+| **15M** | Setup/Location | TDI, BB, S/R, Divergence | Immediate Entry |
+| **5M** | Trigger | TDI Cross, Candle, Structure | Determine Macro Trend |
+| **1M** | Execution Refinement | Entry Distance, Micro Structure | Override HTF |
+
+### HTF Regime System
+
+| 4H Trend | 1H Trend | Regime | BUY | SELL |
+|----------|----------|--------|-----|------|
+| BULLISH | BULLISH | STRONG_BULL | ✅ Preferred | ❌ |
+| BULLISH | NEUTRAL | BULL | ✅ | ⚠️ |
+| NEUTRAL | BULLISH | MILD_BULL | ✅ | ⚠️ |
+| NEUTRAL | NEUTRAL | NEUTRAL | ⚠️ | ⚠️ |
+| BEARISH | BEARISH | STRONG_BEAR | ❌ | ✅ Preferred |
+| BEARISH | NEUTRAL | BEAR | ⚠️ | ✅ |
+| BULLISH | BEARISH | CONFLICT | ⚠️ | ⚠️ |
+| BEARISH | BULLISH | CONFLICT | ⚠️ | ⚠️ |
+
+---
+
+## 📦 Installation
 
 ### Prerequisites
-```bash
-Python 3.9+
-pip (Python package manager)
-Git
-```
 
-Step 1: Clone Repository
+- Python 3.9+
+- Binance API Key (Testnet recommended for initial testing)
+- MongoDB (Optional - for signal persistence)
+- Telegram Bot Token (Optional - for notifications)
+
+### Clone & Install
 
 ```bash
+# Clone the repository
 git clone https://github.com/yourusername/trading-bot.git
 cd trading-bot
-```
 
-Step 2: Create Virtual Environment
-
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-Step 3: Install Dependencies
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
-```
 
-Step 4: Configure Environment
-
-```bash
+# Copy environment configuration
 cp .env.example .env
-# Edit .env with your configuration
+
+# Edit .env with your credentials
+nano .env
 ```
 
-Step 5: Create Required Directories
+### Requirements
 
-```bash
-mkdir -p logs data backups models
-```
-
----
-
-⚙️ Configuration
-
-Environment Variables (.env)
-
-```bash
-# === Binance API Configuration ===
-BINANCE_API_KEY=your_api_key_here
-BINANCE_API_SECRET=your_api_secret_here
-BINANCE_TESTNET=true
-
-# === Telegram Notifications ===
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_CHAT_ID=your_telegram_chat_id
-
-# === Groq AI Configuration ===
-GROQ_API_KEY=your_groq_api_key
-GROQ_MODEL=llama-3.3-70b-versatile
-GROQ_TEMPERATURE=0.3
-GROQ_MAX_TOKENS=1200
-
-# === Firebase Persistence ===
-FIREBASE_CREDENTIALS_JSON={"type":"service_account","project_id":"..."}
-FIREBASE_DATABASE_URL=https://your-project.firebaseio.com
-
-# === Strategy Configuration ===
-TIMEFRAME=15m
-HTF_TIMEFRAME=1h
-LTF_TIMEFRAME=5m
-SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,AVAXUSDT
-
-# === RRR Configuration ===
-DEFAULT_RRR=2.0
-MIN_RRR=1.0
-MAX_RRR=4.0
-TARGET_RRR=2.5
-
-# === Signal Quality ===
-MIN_QUALITY_SCORE=60
-CONFIDENCE_THRESHOLD=0.60
-SYMBOL_COOLDOWN_MINUTES=30
-MAX_SIGNALS_PER_CYCLE=3
-
-# === AI Settings ===
-AI_MIN_INTERVAL_SECONDS=120
-AI_OVERRIDE_QUALITY_THRESHOLD=80
-
-# === Signal Lifecycle ===
-SIGNAL_EXPIRY_HOURS=12
-BREAK_EVEN_THRESHOLD_MINUTES=240
-MIN_BARS_BEFORE_CHECK=2
-
-# === Deployment ===
-ENVIRONMENT=development
-RUN_MODE=DEMO
-DEBUG=false
-PORT=8080
+```txt
+python-binance==1.0.19
+pandas==2.0.3
+numpy==1.24.3
+python-dotenv==1.0.0
+groq==0.4.2
+python-telegram-bot==20.6
+pymongo==4.6.1
+requests==2.31.0
+aiohttp==3.9.1
+scipy>=1.10.0
 ```
 
 ---
 
-🚀 Running the Bot
+## ⚙️ Configuration
 
-Start Trading Bot
+### Environment Variables (.env)
 
 ```bash
-python main.py
+# ========== BINANCE API ==========
+BINANCE_API_KEY=your_api_key
+BINANCE_API_SECRET=your_api_secret
+BINANCE_USE_TESTNET=true
+
+# ========== TELEGRAM ==========
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+
+# ========== MONGODB ==========
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/database
+
+# ========== v3.4.0 THRESHOLDS ==========
+MIN_SETUP_SCORE=70
+MIN_TRIGGER_SCORE=70
+COUNTER_TREND_MIN_SCORE=82
+MAX_ENTRY_DISTANCE_ATR=0.25
+SETUP_EXPIRY_SECONDS=300
+TRIGGER_EXPIRY_SECONDS=120
+
+# ========== FEATURES ==========
+ENABLE_DIVERGENCE=true
+ENABLE_CANDLE_PATTERNS=true
+ENABLE_SR=true
+ENABLE_BB_SQUEEZE=true
+ENABLE_SESSION_FILTERING=true
+ENABLE_HTF_REGIME=true
+ENABLE_STRUCTURE_ANALYSIS=true
 ```
 
-Monitor Health
+### Key Configuration Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MIN_SETUP_SCORE` | 70 | Minimum setup score to arm |
+| `MIN_TRIGGER_SCORE` | 70 | Minimum trigger score to confirm |
+| `COUNTER_TREND_MIN_SCORE` | 82 | Higher threshold for counter-trend signals |
+| `MAX_ENTRY_DISTANCE_ATR` | 0.25 | Max distance from ideal entry (ATR units) |
+| `SETUP_EXPIRY_SECONDS` | 300 | Setup expires after 5 minutes |
+| `TRIGGER_EXPIRY_SECONDS` | 120 | Trigger expires after 2 minutes |
+| `GRADE_A_THRESHOLD` | 82 | Score for Grade A |
+| `GRADE_B_THRESHOLD` | 70 | Score for Grade B |
+
+---
+
+## 🏃 Running the Bot
+
+### Quick Start
 
 ```bash
-# Health Check
+# Run with default configuration
+python main_v34.py
+
+# Run with specific config
+python main_v34.py --config production
+
+# Run in demo mode (no real trades)
+python main_v34.py --demo
+```
+
+### Docker Deployment
+
+```bash
+# Build the image
+docker build -t trading-bot-v34 .
+
+# Run the container
+docker run -d \
+  --name trading-bot \
+  --env-file .env \
+  -p 8080:8080 \
+  trading-bot-v34
+```
+
+### Railway Deployment
+
+The bot includes `railway.json` and `nixpacks.toml` for one-click deployment:
+
+1. Fork the repository
+2. Connect to Railway
+3. Set environment variables
+4. Deploy
+
+---
+
+## 🔄 Signal Flow
+
+### Step-by-Step Signal Generation
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           SIGNAL GENERATION FLOW                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  STEP 1: DATA VALIDATION                                                    │
+│  └─▶ Check data quality, minimum bars, indicator availability              │
+│                                                                             │
+│  STEP 2: HTF REGIME (4H/1H)                                                │
+│  └─▶ Determine directional bias - BULLISH/BEARISH/NEUTRAL                  │
+│                                                                             │
+│  STEP 3: SETUP DETECTION                                                    │
+│  └─▶ TDI Zone + Location + Divergence + Patterns = Setup Score ≥ 70        │
+│                                                                             │
+│  STEP 4: ARM SETUP                                                          │
+│  └─▶ Setup becomes ARMED - waiting for trigger                             │
+│                                                                             │
+│  STEP 5: TRIGGER DETECTION                                                  │
+│  └─▶ TDI Cross + Candle + Structure = Trigger Score ≥ 70                   │
+│                                                                             │
+│  STEP 6: LTF CONFIRMATION (5M)                                              │
+│  └─▶ 5M confirms with TDI cross + HA reversal                              │
+│                                                                             │
+│  STEP 7: VOLUME VALIDATION                                                  │
+│  └─▶ Volume ratio must be ≥ 1.0x (1.3x+ for strong confirmation)           │
+│                                                                             │
+│  STEP 8: STRUCTURE VALIDATION                                               │
+│  └─▶ BOS/CHoCH/reclaim/sweep must confirm direction                        │
+│                                                                             │
+│  STEP 9: ENTRY VALIDATION                                                   │
+│  └─▶ Current price within 0.25 ATR of ideal entry                          │
+│                                                                             │
+│  STEP 10: FINAL SCORING & GRADING                                           │
+│  └─▶ Score: 90-100=A+, 82-89=A, 75-81=B+, 70-74=B                          │
+│                                                                             │
+│  STEP 11: SIGNAL GENERATION                                                 │
+│  └─▶ 🟢 BUY/SELL SIGNAL generated                                          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Scoring Components
+
+| Component | Weight | Description |
+|-----------|--------|-------------|
+| HTF Regime | 20% | Directional bias from 4H/1H |
+| Location | 20% | S/R proximity, BB position |
+| Momentum/TDI | 20% | TDI cross, slope, zone |
+| Entry Trigger | 25% | Candle, structure, volume |
+| Volume | 15% | Volume confirmation |
+
+### Grade System
+
+| Score | Grade | Action |
+|-------|-------|--------|
+| 90-100 | **A+** | Highest-priority signal |
+| 82-89 | **A** | Execute |
+| 75-81 | **B+** | Conditional |
+| 70-74 | **B** | Conservative/conditional |
+| 60-69 | **C** | Watch only |
+| <60 | **D** | Reject |
+
+---
+
+## 📊 Monitoring
+
+### Health Check Endpoint
+
+```bash
 curl http://localhost:8080/health
+```
 
-# Metrics
+Response:
+```json
+{
+  "status": "running",
+  "version": "3.4.0",
+  "timestamp": "2026-08-23T16:13:51.360229Z",
+  "stats": {
+    "signals_generated": 0,
+    "active_signals": 0,
+    "errors": 0
+  },
+  "v34_available": true,
+  "features": {
+    "htf_regime": true,
+    "structure_analysis": true,
+    "signal_state_machine": true,
+    "entry_distance_protection": true,
+    "atr_risk_model": true
+  }
+}
+```
+
+### Log Monitoring
+
+```bash
+# View live logs
+tail -f logs/trading_bot.log
+
+# Filter for signals only
+tail -f logs/trading_bot.log | grep "SIGNAL"
+
+# Filter for errors
+tail -f logs/trading_bot.log | grep "ERROR"
+```
+
+### Metrics Endpoint
+
+```bash
 curl http://localhost:8080/metrics
 ```
 
-Docker Deployment
+Returns Prometheus-style metrics for monitoring.
 
-```bash
-docker build -t trading-bot .
-docker run -d --name trading-bot -p 8080:8080 --env-file .env trading-bot
+---
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| `ModuleNotFoundError: No module named 'data_fetcher'` | Ensure `utils/data_fetcher.py` exists. Check import paths in `main_v34.py` |
+| **No signals generated** | This is normal. v3.4.0 is strict by design. Wait for proper market conditions |
+| **Binance connection failed** | Check API keys. Use testnet for testing: `BINANCE_USE_TESTNET=true` |
+| **MongoDB connection failed** | Check `MONGODB_URI` or set `MONGODB_ENABLED=false` to run in-memory |
+| **Telegram not sending messages** | Verify `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` |
+
+### Log Levels
+
+Set `LOG_LEVEL` in `.env`:
+
+| Level | Use Case |
+|-------|----------|
+| `DEBUG` | Full debugging, indicator values |
+| `INFO` | Normal operation (default) |
+| `WARNING` | Only warnings and errors |
+| `ERROR` | Errors only |
+
+### Signal Debugging
+
+To see why signals are being rejected, add this to `main_v34.py`:
+
+```python
+# After result = signal_engine.process(df, ltf_data)
+if result['signal'] == 'NO_TRADE':
+    reason = result.get('data', {}).get('reason', 'Unknown')
+    logger.debug(f"❌ {symbol}: {reason}")
 ```
 
 ---
 
-📁 Project Structure
+## 📈 Version History
+
+### v3.4.0 (Current)
+
+- **Setup ≠ Signal** - Separate detection from entry trigger
+- **HTF Regime Filter** - 4H/1H directional bias control
+- **TDI Cross + Slope** - Not just zone alone
+- **Market Structure** - BOS/CHoCH/liquidity sweep/reclaim
+- **5M Entry Trigger** - LTF confirmation candle
+- **Volume Gate** - Volume as confirmation/validation
+- **Signal State Machine** - SETUP → ARMED → TRIGGER → CONFIRMED
+- **Entry Freshness** - Stale setups expire
+- **Entry Distance Protection** - ATR-normalized distance check
+- **ATR Risk Model** - Dynamic SL/TP based on volatility
+- **Reversal vs Continuation** - Separate strategies with different scores
+- **Dynamic Scoring** - Regime/Location/Momentum/Trigger/Volume
+- **Session Handling** - Modified requirements, not just confidence
+- **Signal Grading** - A+/A/B/C/D hierarchy
+- **Hard Rejection Rules** - Never override hard gates
+
+### v3.3.0 (Previous)
+
+- Divergence Detection (Bullish/Bearish)
+- Candle Pattern Recognition
+- Support/Resistance Levels
+- BB Squeeze Detection
+- Session-Based Filtering
+
+---
+
+## 📁 Project Structure
 
 ```
 trading-bot/
-├── main.py                    # Main entry point
-├── settings.py                # Configuration management
-├── data_fetcher.py           # Market data fetching
-├── requirements.txt          # Python dependencies
-├── Dockerfile                # Docker configuration
-├── .env.example              # Environment variables template
-├── README.md                 # This file
+├── main_v34.py              # Main entry point
+├── settings.py              # Configuration
 ├── strategy/
-│   └── consolidated_trend.py # Main strategy logic
+│   ├── __init__.py
+│   ├── signal_engine_v34.py # v3.4.0 Signal Engine
+│   ├── signal_state.py      # State Machine
+│   ├── htf_regime.py        # HTF Regime System
+│   └── structure.py         # Market Structure Analysis
 ├── utils/
-│   ├── ai_analyzer.py       # AI integration
-│   ├── signal_manager.py    # Signal lifecycle management
-│   ├── telegram_bot.py      # Telegram notifications
-│   ├── firebase_client.py   # Firebase persistence
-│   └── indicators.py        # Technical indicators
-├── logs/                    # Log files
-├── data/                    # Data storage
-├── backups/                 # Backup files
-└── models/                  # AI models
+│   ├── __init__.py
+│   ├── data_fetcher.py      # Binance Data Fetcher
+│   ├── indicators.py        # Technical Indicators
+│   ├── signal_manager.py    # Signal Lifecycle Manager
+│   ├── mongodb_client.py    # MongoDB Persistence
+│   ├── telegram_bot.py      # Telegram Notifications
+│   └── ai_analyzer.py       # AI Analysis (Optional)
+├── .env.example             # Environment variables template
+├── requirements.txt         # Python dependencies
+├── railway.json             # Railway deployment config
+└── nixpacks.toml            # Nixpacks build config
 ```
 
 ---
 
-📊 Signal Flow
+## 🛡️ Disclaimer
 
-```
-1. Data Fetching
-   └── Binance API → Market Data
+**IMPORTANT:** This bot is for **educational and research purposes only**.
 
-2. Strategy Analysis
-   ├── HTF Trend (1h)
-   ├── LTF Confirmation (5m)
-   ├── TDI Analysis
-   ├── BB Touch Detection
-   └── Smart Money Detection
-
-3. Signal Generation
-   ├── Quality Score Calculation
-   ├── Dynamic RRR Suggestion
-   └── Signal Strength (HARD/SOFT)
-
-4. AI Validation
-   ├── Conflict Detection
-   ├── RRR Optimization
-   └── Decision (APPROVE/REJECT/WAIT)
-
-5. Signal Execution
-   ├── SL/TP Calculation
-   ├── Position Sizing
-   └── Telegram Notification
-
-6. Active Monitoring
-   ├── SL/TP Monitoring
-   ├── Break-Even Check
-   └── Signal Expiry (12h)
-```
+- **Not financial advice** - Do not trade with money you cannot afford to lose
+- **No guarantees** - Past performance does not guarantee future results
+- **Use at your own risk** - The authors assume no liability for financial losses
+- **Test thoroughly** - Always test on testnet before using real funds
 
 ---
 
-📈 Performance Metrics
-
-Prometheus Metrics
-
-The bot exposes Prometheus metrics at /metrics endpoint:
-
-· bot_status - Bot health status
-· bot_signals_generated - Total signals generated
-· bot_sniper_signals - Total executed signals
-· bot_profitable_signals - Profitable signals count
-· bot_losing_signals - Losing signals count
-· bot_total_pnl - Total PnL
-· bot_avg_rrr - Average Risk/Reward Ratio
-· bot_ai_tokens_remaining - AI tokens remaining
-· bot_ai_approve_count - AI approvals
-· bot_ai_reject_count - AI rejections
-
----
-
-🛠️ Troubleshooting
-
-Common Issues
-
-1. Connection Errors
-
-```bash
-# Check Binance API connectivity
-curl https://api.binance.com/api/v3/ping
-
-# Verify API keys
-python -c "from settings import config; print(config.binance.api_key)"
-```
-
-2. AI Rate Limiting
-
-```bash
-# Check AI tokens
-curl http://localhost:8080/health | jq '.ai_status.tokens_remaining'
-
-# Clear AI cache
-python -c "from utils.ai_analyzer import ai_analyzer; ai_analyzer.clear_cache()"
-```
-
-3. Missing Signals
-
-· Verify symbol cooldown: Check SYMBOL_COOLDOWN_MINUTES
-· Check confidence threshold: CONFIDENCE_THRESHOLD
-· Verify quality score: MIN_QUALITY_SCORE
-· Check LTF confirmation: REQUIRE_LTF_CONFIRMATION
-
-4. Telegram Notifications Not Working
-
-```bash
-# Test connection
-python -c "from utils.telegram_bot import telegram_bot; telegram_bot.send_message('Test')"
-```
-
----
-
-🔒 Security
-
-Best Practices
-
-1. Never commit .env file - Use .env.example as template
-2. Use environment variables for all secrets
-3. Run in demo mode first before going live
-4. Monitor logs for suspicious activity
-5. Regularly update dependencies
-6. Use strong API keys with limited permissions
-
-Production Setup
-
-```bash
-# Use production environment
-ENVIRONMENT=production
-
-# Disable demo mode
-RUN_MODE=PRODUCTION
-
-# Enable security features
-DEBUG=false
-
-# Use strong API keys
-BINANCE_API_KEY=... (read-only keys recommended)
-```
-
----
-
-🤝 Contributing
-
-Development Setup
-
-```bash
-# Clone development branch
-git checkout develop
-
-# Install development dependencies
-pip install -r requirements-dev.txt
-
-# Run tests
-pytest tests/
-
-# Check code style
-black .
-flake8
-```
-
-Pull Request Process
-
-1. Fork the repository
-2. Create feature branch (git checkout -b feature/amazing-feature)
-3. Commit changes (git commit -m 'Add amazing feature')
-4. Push to branch (git push origin feature/amazing-feature)
-5. Open Pull Request
-
----
-
-📝 License
+## 📝 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 ---
 
-⚠️ Disclaimer
+## 🤝 Contributing
 
-IMPORTANT: This bot is for educational purposes only. Cryptocurrency trading involves significant risk. Never trade with money you cannot afford to lose. The authors are not responsible for any financial losses incurred while using this software.
+Contributions are welcome! Please:
 
----
-
-📞 Support
-
-· Documentation: Wiki
-· Issues: GitHub Issues
-· Discord: Join Discord
-· Twitter: @YourTwitter
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a Pull Request
 
 ---
 
-🙏 Acknowledgments
+## 📞 Support
 
-· Binance API - Market data provider
-· Groq AI - AI analysis
-· Telegram - Notifications
-· Firebase - Persistence
-
----
-
-📊 Version History
-
-v3.1.0 (Current)
-
-· ✅ Fixed AI conflict detection and handling
-· ✅ Added dynamic RRR based on quality score
-· ✅ Improved HTF trend validation
-· ✅ Added quality score filtering
-· ✅ Fixed signal lifecycle management
-· ✅ Enhanced Telegram notifications with AI reasoning
-
-v3.0.0
-
-· ✅ Hybrid strategy integration
-· ✅ Smart Money concepts added
-· ✅ Multi-timeframe analysis
-· ✅ AI integration
-
-v2.0.0
-
-· ✅ TDI + BB strategy
-· ✅ Telegram notifications
-· ✅ Firebase persistence
+- **Issues**: [GitHub Issues](https://github.com/yourusername/trading-bot/issues)
+- **Documentation**: [Wiki](https://github.com/yourusername/trading-bot/wiki)
+- **Discord**: [Join our Discord](https://discord.gg/your-invite)
 
 ---
 
-🚀 Quick Start
+## 🙏 Acknowledgments
 
-```bash
-# 1. Clone repository
-git clone https://github.com/yourusername/trading-bot.git
-cd trading-bot
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Configure environment
-cp .env.example .env
-# Edit .env with your configuration
-
-# 4. Start trading
-python main.py
-
-# 5. Monitor health
-curl http://localhost:8080/health
-```
+- Binance for the excellent API
+- The open-source community for the libraries
+- All contributors and testers
 
 ---
 
-Made with ❤️ for the trading community
+*Built with ❤️ and ☕ by the Trading Bot Team*
 
+**Version 3.4.0** | *Last Updated: August 2026*
 ```
-
----
-
-## Additional Files Needed
-
-### `.env.example`
-```bash
-# === Binance API Configuration ===
-BINANCE_API_KEY=your_api_key_here
-BINANCE_API_SECRET=your_api_secret_here
-BINANCE_TESTNET=true
-
-# === Telegram Notifications ===
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_CHAT_ID=your_telegram_chat_id
-
-# === Groq AI Configuration ===
-GROQ_API_KEY=your_groq_api_key
-GROQ_MODEL=llama-3.3-70b-versatile
-GROQ_TEMPERATURE=0.3
-GROQ_MAX_TOKENS=1200
-
-# === Firebase Persistence ===
-FIREBASE_CREDENTIALS_JSON={"type":"service_account","project_id":"your-project","private_key":"-----BEGIN PRIVATE KEY-----\n...","client_email":"...@...iam.gserviceaccount.com"}
-FIREBASE_DATABASE_URL=https://your-project.firebaseio.com
-FIREBASE_COLLECTION=trading_signals
-
-# === Strategy Configuration ===
-TIMEFRAME=15m
-HTF_TIMEFRAME=1h
-LTF_TIMEFRAME=5m
-SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,AVAXUSDT,DOGEUSDT,ADAUSDT,DOTUSDT,MATICUSDT,LINKUSDT,UNIUSDT
-
-# === RRR Configuration ===
-DEFAULT_RRR=2.0
-MIN_RRR=1.0
-MAX_RRR=4.0
-TARGET_RRR=2.5
-
-# === Signal Quality ===
-MIN_QUALITY_SCORE=60
-CONFIDENCE_THRESHOLD=0.60
-SYMBOL_COOLDOWN_MINUTES=30
-MAX_SIGNALS_PER_CYCLE=3
-MAX_ACTIVE_SIGNALS=8
-
-# === AI Settings ===
-AI_MIN_INTERVAL_SECONDS=120
-AI_CACHE_TTL=600
-AI_OVERRIDE_QUALITY_THRESHOLD=80
-
-# === Signal Lifecycle ===
-SIGNAL_EXPIRY_HOURS=12
-BREAK_EVEN_THRESHOLD_MINUTES=240
-MIN_BARS_BEFORE_CHECK=2
-
-# === Trading Settings ===
-RISK_PER_TRADE_PERCENT=0.5
-MAX_POSITION_SIZE_PERCENT=10.0
-USE_FUTURES=true
-MAX_LEVERAGE=20
-DEFAULT_LEVERAGE=5
-
-# === Deployment ===
-ENVIRONMENT=development
-RUN_MODE=DEMO
-DEBUG=false
-PORT=8080
-ENABLE_HEALTH_SERVER=true
-
-# === Logging ===
-LOG_LEVEL=INFO
-LOG_FILE=logs/trading_bot.log
-METRICS_ENABLED=true
-METRICS_PORT=9090
-```
-
-requirements.txt
-
-```bash
-# Core Dependencies
-python-binance==1.0.19
-pandas==2.0.3
-numpy==1.24.3
-python-dotenv==1.0.0
-
-# AI Integration
-groq==0.4.2
-httpx==0.25.1
-
-# Telegram
-python-telegram-bot==20.6
-
-# Firebase
-firebase-admin==6.4.0
-
-# HTTP & Networking
-requests==2.31.0
-urllib3==2.0.7
-
-# Utilities
-python-dateutil==2.8.2
-pytz==2023.3
-
-# Logging & Monitoring
-prometheus-client==0.17.1
-
-# Database (Optional)
-sqlalchemy==2.0.22
-psycopg2-binary==2.9.9
-
-# Development (Optional)
-pytest==7.4.3
-black==23.11.0
-flake8==6.1.0
-mypy==1.7.0
-```
-
-Dockerfile
-
-```dockerfile
-FROM python:3.9-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements and install
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY . .
-
-# Create directories
-RUN mkdir -p logs data backups models
-
-# Expose ports
-EXPOSE 8080 9090
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8080/health')"
-
-# Run the bot
-CMD ["python", "main.py"]
-```
-
-.gitignore
-
-```bash
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Logs
-logs/
-*.log
-
-# Data
-data/
-*.db
-*.sqlite
-
-# Backups
-backups/
-*.bak
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Docker
-*.pid
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
-
-# Firebase
-*.json
-!firebase-credentials-example.json
-
-# Groq
-groq_*.json
-```
-
-These files provide everything needed for a complete GitHub repository with proper documentation, configuration, and deployment setup."# Daily_Signal_Alert_v3.4.0-Day-Trading" 

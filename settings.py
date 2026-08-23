@@ -1,6 +1,6 @@
 """
 Configuration management for the AI Trading Bot.
-Version: 3.4.0 - ENHANCED: Added v3.4.0 signal engine config
+Version: 3.4.0 - ENHANCED: Added v3.4.0 signal engine config + PRODUCTION support
 """
 
 import os
@@ -181,7 +181,7 @@ class StrategyConfig:
     min_quality_score: int = 50
     min_signal_score: int = 70
     signal_cooldown_minutes: int = 30
-    max_signals_per_cycle: int = 3
+    max_signals_per_cycle: int = 5
 
     # === Leverage ===
     default_leverage: int = 5
@@ -196,6 +196,13 @@ class StrategyConfig:
         "NY": 1.2,
         "LATE": 0.8,
     })
+
+    # ===== PRODUCTION-SPECIFIC SETTINGS =====
+    # These are more conservative for production
+    production_position_size_multiplier: float = 0.5  # 50% of normal position size
+    production_max_daily_trades: int = 3  # Fewer trades in production
+    production_min_setup_score: int = 75  # Higher threshold for production
+    production_require_extra_confirmation: bool = True
 
 
 @dataclass
@@ -264,6 +271,11 @@ class DeploymentConfig:
     port: int = 8080
     host: str = "0.0.0.0"
 
+    # Production-specific
+    use_sentry: bool = False
+    sentry_dsn: str = ""
+    log_level_production: str = "WARNING"  # Less verbose in production
+
 
 # ------------------- Main Config Class -------------------
 
@@ -287,7 +299,25 @@ class Config:
         self._validate()
         self._setup_directories()
 
+        # Log configuration mode
+        run_mode = self.deployment.run_mode.value
+        env = self.deployment.environment.value
+
         logger.info(f"Config initialized v{self.VERSION}")
+        logger.info(f"  - Environment: {env}")
+        logger.info(f"  - Run Mode: {run_mode}")
+
+        if run_mode == "PRODUCTION":
+            logger.info(f"🔴 PRODUCTION MODE ACTIVE - Using REAL funds!")
+            logger.info(f"  - Position Size: {self.get_position_size_multiplier()*100:.0f}%")
+            logger.info(f"  - Max Daily Trades: {self.strategy.max_daily_trades}")
+            logger.info(f"  - Setup Score Required: {self.strategy.min_setup_score}")
+            logger.info(f"  - Extra Confirmation: {self.strategy.production_require_extra_confirmation}")
+        elif run_mode == "DEMO":
+            logger.info(f"🎮 DEMO MODE - Using synthetic data (NO real trades)")
+        elif run_mode == "BACKTEST":
+            logger.info(f"📊 BACKTEST MODE - Historical data only")
+
         logger.info(f"✅ v3.4.0 Features enabled:")
         logger.info(f"  - Min Setup Score: {self.strategy.min_setup_score}")
         logger.info(f"  - Min Trigger Score: {self.strategy.min_trigger_score}")
@@ -295,6 +325,10 @@ class Config:
         logger.info(f"  - Max Entry Distance: {self.strategy.max_entry_distance_atr} ATR")
         logger.info(f"  - Grade A: {self.strategy.grade_a_threshold}+")
         logger.info(f"  - Grade A+: {self.strategy.grade_a_plus_threshold}+")
+        logger.info(f"  - HTF Regime: {self.strategy.enable_htf_regime}")
+        logger.info(f"  - Structure Analysis: {self.strategy.enable_structure_analysis}")
+        logger.info(f"  - Volume Gate: {self.strategy.enable_volume_gate}")
+        logger.info(f"  - LTF Confirmation: {self.strategy.enable_ltf_confirmation}")
 
     def _load_from_env(self):
         # ====== BINANCE ======
@@ -322,9 +356,12 @@ class Config:
         )
 
         # ====== STRATEGY v3.4.0 ======
+        run_mode = os.getenv("RUN_MODE", "DEMO").upper().strip()
+        is_production = run_mode == "PRODUCTION"
+
         self.strategy = StrategyConfig(
-            min_setup_score=safe_int_env("MIN_SETUP_SCORE", 70, min_val=50, max_val=90),
-            min_trigger_score=safe_int_env("MIN_TRIGGER_SCORE", 70, min_val=50, max_val=90),
+            min_setup_score=safe_int_env("MIN_SETUP_SCORE", 75 if is_production else 70, min_val=50, max_val=90),
+            min_trigger_score=safe_int_env("MIN_TRIGGER_SCORE", 75 if is_production else 70, min_val=50, max_val=90),
             counter_trend_min_score=safe_int_env("COUNTER_TREND_MIN_SCORE", 82, min_val=70, max_val=95),
             max_signals_per_hour=safe_int_env("MAX_SIGNALS_PER_HOUR", 2, min_val=1, max_val=10),
             setup_expiry_seconds=safe_int_env("SETUP_EXPIRY_SECONDS", 300, min_val=60, max_val=600),
@@ -361,7 +398,7 @@ class Config:
             min_rrr=safe_float_env("MIN_RRR", 1.5, min_val=1.0, max_val=3.0),
             max_rrr=safe_float_env("MAX_RRR", 4.0, min_val=2.0, max_val=6.0),
             risk_per_trade_percent=safe_float_env("RISK_PER_TRADE_PERCENT", 0.5, min_val=0.01, max_val=5.0),
-            max_daily_trades=safe_int_env("MAX_DAILY_TRADES", 5, min_val=1, max_val=30),
+            max_daily_trades=safe_int_env("MAX_DAILY_TRADES", 3 if is_production else 5, min_val=1, max_val=30),
             ai_enabled=safe_bool_env("AI_ENABLED", True),
             ai_min_interval_seconds=safe_int_env("AI_MIN_INTERVAL_SECONDS", 120, min_val=30, max_val=600),
             ai_cache_ttl=safe_int_env("AI_CACHE_TTL", 600, min_val=60, max_val=3600),
@@ -379,7 +416,12 @@ class Config:
                 "LONDON": safe_float_env("SESSION_LONDON_MULTIPLIER", 1.0, min_val=0.5, max_val=1.5),
                 "NY": safe_float_env("SESSION_NY_MULTIPLIER", 1.2, min_val=0.5, max_val=1.5),
                 "LATE": safe_float_env("SESSION_LATE_MULTIPLIER", 0.8, min_val=0.3, max_val=1.0),
-            }
+            },
+            # Production settings
+            production_position_size_multiplier=safe_float_env("PRODUCTION_POSITION_SIZE_MULTIPLIER", 0.5, min_val=0.1, max_val=1.0),
+            production_max_daily_trades=safe_int_env("PRODUCTION_MAX_DAILY_TRADES", 3, min_val=1, max_val=10),
+            production_min_setup_score=safe_int_env("PRODUCTION_MIN_SETUP_SCORE", 75, min_val=70, max_val=90),
+            production_require_extra_confirmation=safe_bool_env("PRODUCTION_EXTRA_CONFIRMATION", True),
         )
 
         # ====== PERFORMANCE ======
@@ -413,8 +455,12 @@ class Config:
         self.mongodb = self._load_mongodb_config()
 
         # ====== LOGGING ======
+        log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+        if is_production:
+            log_level = os.getenv("LOG_LEVEL_PRODUCTION", "WARNING").upper()
+
         self.logging = LoggingConfig(
-            level=os.getenv("LOG_LEVEL", "INFO").upper(),
+            level=log_level,
             file=os.getenv("LOG_FILE", "logs/trading_bot.log"),
             format=os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"),
         )
@@ -426,9 +472,8 @@ class Config:
         except ValueError:
             environment = Environment.DEVELOPMENT
 
-        run_mode_str = os.getenv("RUN_MODE", "DEMO").upper().strip()
         try:
-            run_mode = RunMode(run_mode_str)
+            run_mode = RunMode(run_mode)
         except ValueError:
             run_mode = RunMode.DEMO
 
@@ -438,6 +483,9 @@ class Config:
             debug=safe_bool_env("DEBUG", False),
             port=safe_int_env("PORT", 8080, min_val=1024, max_val=65535),
             host=os.getenv("HOST", "0.0.0.0"),
+            use_sentry=safe_bool_env("USE_SENTRY", False),
+            sentry_dsn=os.getenv("SENTRY_DSN", ""),
+            log_level_production=os.getenv("LOG_LEVEL_PRODUCTION", "WARNING"),
         )
 
     def _load_mongodb_config(self) -> MongoDBConfig:
@@ -494,6 +542,9 @@ class Config:
             if not self.telegram.enabled:
                 warnings.append("TELEGRAM_BOT_TOKEN not set - notifications will not work")
 
+            if self.deployment.run_mode != RunMode.PRODUCTION:
+                warnings.append("PRODUCTION environment but RUN_MODE is not PRODUCTION")
+
         # Validate grade thresholds
         if self.strategy.grade_b_threshold >= self.strategy.grade_a_threshold:
             warnings.append(f"GRADE_B_THRESHOLD ({self.strategy.grade_b_threshold}) should be below GRADE_A_THRESHOLD ({self.strategy.grade_a_threshold})")
@@ -505,6 +556,11 @@ class Config:
 
         if self.strategy.min_rrr < 1.0:
             warnings.append(f"MIN_RRR ({self.strategy.min_rrr}) below 1.0")
+
+        # Production-specific validation
+        if self.deployment.run_mode == RunMode.PRODUCTION:
+            if self.strategy.risk_per_trade_percent > 2.0:
+                warnings.append(f"RISK_PER_TRADE_PERCENT ({self.strategy.risk_per_trade_percent}%) is high for production (recommended <2%)")
 
         for warning in warnings:
             logger.warning(f"Configuration warning: {warning}")
@@ -530,6 +586,16 @@ class Config:
 
     def is_backtest(self) -> bool:
         return self.deployment.run_mode == RunMode.BACKTEST
+
+    def is_production_mode(self) -> bool:
+        """Check if running in PRODUCTION mode."""
+        return self.deployment.run_mode == RunMode.PRODUCTION
+
+    def get_position_size_multiplier(self) -> float:
+        """Get position size multiplier based on run mode."""
+        if self.is_production_mode():
+            return self.strategy.production_position_size_multiplier
+        return 1.0
 
     def get_grade(self, score: int) -> str:
         """Get grade based on v3.4.0 thresholds."""
