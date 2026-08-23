@@ -748,4 +748,4 @@ htmlcov/
 groq_*.json
 ```
 
-These files provide everything needed for a complete GitHub repository with proper documentation, configuration, and deployment setup.
+These files provide everything needed for a complete GitHub repository with proper documentation, configuration, and deployment setup."# Daily_Signal_Alert_v3.4.0-Day-Trading" 
