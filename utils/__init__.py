@@ -1,20 +1,30 @@
 """
 Utils Package - Super TDI + Super Bollinger Bands Strategy
-Version: 3.4.0 - FIXED
+Version: 3.4.0
 """
 
+# Data
 from utils.binance_data_client import binance_client
 from utils.mongodb_client import mongodb_client
-from utils.indicators import Indicators, calculate_heikin_ashi, calculate_all_indicators
-from utils.signal_manager import signal_manager
-from utils.telegram_bot import telegram_bot
-from utils.logger import get_logger
 
-# Alias Indicators class methods for convenience
+# Indicators - Only import what exists as standalone functions
+from utils.indicators import (
+    Indicators,              # ✅ Class exists
+    calculate_heikin_ashi,   # ✅ Standalone exists
+)
+
+# Create aliases from the Indicators class for main.py compatibility
+calculate_all_indicators = Indicators.calculate_all_indicators
 calculate_bollinger_bands = Indicators.calculate_bollinger_bands
-calculate_tdi = Indicators.calculate_tdi
-calculate_sma = Indicators.calculate_sma
-calculate_ema = Indicators.calculate_ema
+
+# Signal Manager
+from utils.signal_manager import signal_manager
+
+# Telegram
+from utils.telegram_bot import telegram_bot
+
+# Logger
+from utils.logger import get_logger
 
 __all__ = [
     'binance_client',
@@ -22,9 +32,6 @@ __all__ = [
     'Indicators',
     'calculate_heikin_ashi',
     'calculate_bollinger_bands',
-    'calculate_tdi',
-    'calculate_sma',
-    'calculate_ema',
     'calculate_all_indicators',
     'signal_manager',
     'telegram_bot',
