@@ -10,4 +10,4 @@ cmds = [
 ]
 
 [start]
-cmd = "python main_v34.py"
+cmd = "python main.py"
