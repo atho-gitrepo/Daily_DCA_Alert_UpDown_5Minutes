@@ -1,6 +1,7 @@
 """
 Signal Manager - Handles signal lifecycle, debouncing, and duplicate prevention
-Version: 3.4.0 - ALIGNED WITH SUPER TDI + SUPER BB STRATEGY
+ALIGNED: Super TDI + Super Bollinger Bands Strategy with 1-Hour Holds
+Version: 3.4.0 - UPDATED: 1-hour exit logic for day trading
 """
 
 import logging
@@ -34,7 +35,7 @@ EMOJI = {
     "STRUCTURE": "🏗️", "REGIME": "📈", "STATE": "🔄",
     # Super TDI + BB
     "TDI": "📈", "BB": "📊", "CANDLE": "🕯️", "CHEAT": "📋",
-    "AI": "🤖", "APPROVE": "✅", "REJECT": "🚫",
+    "AI": "🤖", "APPROVE": "✅", "REJECT": "🚫", "EXIT": "⏰",
 }
 
 
@@ -50,6 +51,7 @@ class TradeLifecycle(str, Enum):
     INVALIDATED = "INVALIDATED"
     AI_REJECTED = "AI_REJECTED"
     AI_WAITING = "AI_WAITING"
+    EXIT_1H = "EXIT_1H"  # 1-hour forced exit
 
 
 @dataclass
@@ -125,8 +127,9 @@ class SignalData:
 
     raw_data: Dict = field(default_factory=dict)
     bar_count: int = 0
-    min_bars_before_check: int = 2
-    min_age_seconds_before_check: int = 120
+    min_bars_before_check: int = 3
+    min_age_seconds_before_check: int = 300  # 5 minutes
+    max_hold_minutes: int = 60  # 1 hour
     highest_price: Optional[float] = None
     lowest_price: Optional[float] = None
     restored_from_db: bool = False
@@ -256,10 +259,17 @@ class SignalData:
         else:
             return "⏳ PENDING"
 
+    def get_hold_status(self) -> str:
+        """Get hold status for display."""
+        age_minutes = self.get_age_minutes()
+        remaining = max(0, self.max_hold_minutes - age_minutes)
+        return f"{age_minutes:.0f}min / {self.max_hold_minutes}min ({remaining:.0f}min remaining)"
+
 
 class SignalManager:
     """
     Manages trading signals aligned with Super TDI + Super BB strategy.
+    Supports 1-hour holds with TP/SL priority.
     """
 
     def __init__(self):
@@ -270,14 +280,20 @@ class SignalManager:
         self.symbol_signal_count: Dict[str, int] = {}
         self.global_signal_timestamps: List[datetime] = []
 
-        # Configuration
+        # ===== CONFIGURATION FOR 1-HOUR HOLDS =====
         self.SYMBOL_COOLDOWN_MINUTES = 30
         self.GLOBAL_COOLDOWN_SECONDS = 15
         self.MAX_SIGNALS_PER_HOUR = 8
-        self.MIN_BARS_BEFORE_CHECK = 2
-        self.MIN_SIGNAL_AGE_SECONDS = 120
-        self.BREAK_EVEN_THRESHOLD_MINUTES = 480
-        self.BREAK_EVEN_PRICE_THRESHOLD = 0.001
+
+        # === Exit Rules ===
+        self.MAX_HOLD_MINUTES = 60          # Exit after 1 hour
+        self.MIN_HOLD_MINUTES = 15          # Minimum 15 minutes before checking
+        self.BREAK_EVEN_THRESHOLD_MINUTES = 60  # Check break-even at 1 hour
+        self.BREAK_EVEN_PRICE_THRESHOLD = 0.001  # 0.1% for break-even
+
+        # === Check Timing ===
+        self.MIN_BARS_BEFORE_CHECK = 3      # 3 bars (15 min) before checking
+        self.MIN_SIGNAL_AGE_SECONDS = 300   # 5 minutes minimum hold
 
         # Grade thresholds
         self.GRADE_A_PLUS_THRESHOLD = 90
@@ -295,6 +311,9 @@ class SignalManager:
 
         logger.info(f"✅ SIGNAL_MANAGER v3.4.0: Initialized")
         logger.info(f"  - Strategy: Super TDI + Super Bollinger Bands")
+        logger.info(f"  - Max Hold: {self.MAX_HOLD_MINUTES} minutes (1 hour)")
+        logger.info(f"  - Min Hold: {self.MIN_HOLD_MINUTES} minutes")
+        logger.info(f"  - Break-Even: {self.BREAK_EVEN_THRESHOLD_MINUTES} minutes")
         logger.info(f"  - Grade A+: {self.GRADE_A_PLUS_THRESHOLD}+")
         logger.info(f"  - Grade A: {self.GRADE_A_THRESHOLD}+")
         logger.info(f"  - Grade B+: {self.GRADE_B_PLUS_THRESHOLD}+")
@@ -422,6 +441,7 @@ class SignalManager:
                 raw_data=raw_data,
                 min_bars_before_check=self.MIN_BARS_BEFORE_CHECK,
                 min_age_seconds_before_check=self.MIN_SIGNAL_AGE_SECONDS,
+                max_hold_minutes=self.MAX_HOLD_MINUTES,
                 highest_price=entry_price,
                 lowest_price=entry_price,
             )
@@ -498,7 +518,16 @@ class SignalManager:
 
     def check_active_signal(self, symbol: str, current_price: float,
                            last_candle: Dict) -> Tuple[str, float, Optional[SignalData]]:
-        """Check active signal for TP/SL/BreakEven."""
+        """
+        Check active signal for TP/SL/BreakEven.
+
+        Exit Rules (in priority order):
+        1. Stop Loss hit → EXIT LOSS
+        2. Take Profit hit → EXIT PROFIT
+        3. 1-hour hold expired → FORCE EXIT
+        4. Break-even after 1 hour → EXIT BREAK-EVEN
+        5. Otherwise → ACTIVE
+        """
         if symbol not in self.active_signals:
             return "NO_SIGNAL", 0, None
 
@@ -506,6 +535,7 @@ class SignalManager:
         signal.bar_count += 1
         signal.last_checked_at = datetime.now().isoformat()
 
+        # Update highest/lowest prices
         if signal.highest_price is None or current_price > signal.highest_price:
             signal.highest_price = current_price
         if signal.lowest_price is None or current_price < signal.lowest_price:
@@ -514,34 +544,52 @@ class SignalManager:
         age_seconds = signal.get_age_seconds()
         age_minutes = age_seconds / 60
 
+        # ===== RULE 1: MINIMUM HOLD TIME =====
+        # Don't check TP/SL until minimum hold time has passed
         if signal.bar_count < signal.min_bars_before_check:
             return "ACTIVE", current_price - signal.entry_price, signal
         if age_seconds < signal.min_age_seconds_before_check:
             return "ACTIVE", current_price - signal.entry_price, signal
 
-        # Check SL/TP
+        # ===== RULE 2: CHECK STOP LOSS =====
         if signal.signal_type == "BUY":
             if current_price <= signal.stop_loss:
                 updated = self._unlock_symbol(symbol, TradeLifecycle.LOSS, current_price)
+                logger.info(f"{EMOJI['LOSS']} {symbol}: SL HIT at ${current_price:.4f}")
                 return TradeLifecycle.LOSS.value, current_price - signal.entry_price, updated
-            if current_price >= signal.take_profit:
-                updated = self._unlock_symbol(symbol, TradeLifecycle.PROFIT, current_price)
-                return TradeLifecycle.PROFIT.value, current_price - signal.entry_price, updated
         else:
             if current_price >= signal.stop_loss:
                 updated = self._unlock_symbol(symbol, TradeLifecycle.LOSS, current_price)
+                logger.info(f"{EMOJI['LOSS']} {symbol}: SL HIT at ${current_price:.4f}")
                 return TradeLifecycle.LOSS.value, signal.entry_price - current_price, updated
+
+        # ===== RULE 3: CHECK TAKE PROFIT =====
+        if signal.signal_type == "BUY":
+            if current_price >= signal.take_profit:
+                updated = self._unlock_symbol(symbol, TradeLifecycle.PROFIT, current_price)
+                logger.info(f"{EMOJI['PROFIT']} {symbol}: TP HIT at ${current_price:.4f}")
+                return TradeLifecycle.PROFIT.value, current_price - signal.entry_price, updated
+        else:
             if current_price <= signal.take_profit:
                 updated = self._unlock_symbol(symbol, TradeLifecycle.PROFIT, current_price)
+                logger.info(f"{EMOJI['PROFIT']} {symbol}: TP HIT at ${current_price:.4f}")
                 return TradeLifecycle.PROFIT.value, signal.entry_price - current_price, updated
 
-        # Break-even check (8 hours)
-        if age_minutes > self.BREAK_EVEN_THRESHOLD_MINUTES:
+        # ===== RULE 4: FORCE EXIT AFTER 1 HOUR =====
+        if age_minutes >= self.MAX_HOLD_MINUTES:
+            updated = self._unlock_symbol(symbol, TradeLifecycle.EXIT_1H, current_price)
+            logger.info(f"{EMOJI['EXIT']} {symbol}: 1-HOUR FORCE EXIT at ${current_price:.4f} | PnL: ${updated.pnl:.2f}")
+            return "EXIT_1H", current_price - signal.entry_price, updated
+
+        # ===== RULE 5: BREAK-EVEN CHECK AT 1 HOUR =====
+        if age_minutes >= self.BREAK_EVEN_THRESHOLD_MINUTES:
             price_diff_pct = abs((current_price - signal.entry_price) / signal.entry_price)
             if price_diff_pct < self.BREAK_EVEN_PRICE_THRESHOLD:
                 updated = self._unlock_symbol(symbol, TradeLifecycle.BREAK_EVEN, current_price)
+                logger.info(f"{EMOJI['BREAK']} {symbol}: BREAK-EVEN at ${current_price:.4f}")
                 return TradeLifecycle.BREAK_EVEN.value, 0, updated
 
+        # ===== RULE 6: ACTIVE =====
         return "ACTIVE", current_price - signal.entry_price, signal
 
     def _unlock_symbol(self, symbol: str, status: TradeLifecycle, exit_price: float) -> Optional[SignalData]:
@@ -557,12 +605,14 @@ class SignalManager:
         signal.exit_time = datetime.now().isoformat()
         signal.exit_price = exit_price
 
+        # Calculate PnL
         if signal.signal_type == "BUY":
             signal.pnl = exit_price - signal.entry_price
         else:
             signal.pnl = signal.entry_price - exit_price
         signal.pnl_percent = (signal.pnl / signal.entry_price) * 100 if signal.entry_price > 0 else 0
 
+        # Calculate fees (0.11% total - entry + exit)
         fee = signal.entry_price * 0.0011 + exit_price * 0.0011
         signal.fees = fee
         signal.pnl = signal.pnl - fee
@@ -580,11 +630,14 @@ class SignalManager:
 
         del self.active_signals[symbol]
 
+        # Log exit details
+        hold_minutes = signal.get_age_minutes()
         logger.info(
             f"{EMOJI['UNLOCK']} SIGNAL_UNLOCK: {symbol} {old_status} -> {status_str} | "
             f"PnL: ${signal.pnl:.2f} ({signal.pnl_percent:.2f}%) | "
-            f"Conditions: {signal.conditions_met}/{signal.conditions_total} | "
-            f"Bars: {signal.bar_count} | Age: {signal.get_age_minutes():.1f}min"
+            f"Hold: {hold_minutes:.1f}min | "
+            f"Bars: {signal.bar_count} | "
+            f"Conditions: {signal.conditions_met}/{signal.conditions_total}"
         )
         return signal
 
@@ -598,8 +651,12 @@ class SignalManager:
             return False
 
     def get_stats(self) -> Dict:
+        """Get signal manager statistics."""
+        active_count = len(self.active_signals)
+        total_conditions = sum(s.conditions_met for s in self.active_signals.values()) if active_count > 0 else 0
+
         return {
-            "active": len(self.active_signals),
+            "active": active_count,
             "history": len(self.signal_history),
             "active_symbols": list(self.active_signals.keys()),
             "grade_summary": {
@@ -609,7 +666,7 @@ class SignalManager:
                 "b": sum(1 for s in self.active_signals.values() if s.grade == "B"),
             },
             "conditions_summary": {
-                "avg_conditions_met": sum(s.conditions_met for s in self.active_signals.values()) / max(1, len(self.active_signals)),
+                "avg_conditions_met": total_conditions / max(1, active_count),
                 "max_conditions": max([s.conditions_met for s in self.active_signals.values()]) if self.active_signals else 0,
             },
             "ai_summary": {
@@ -617,6 +674,12 @@ class SignalManager:
                 "rejected": sum(1 for s in self.active_signals.values() if s.ai_decision == "REJECT"),
                 "waiting": sum(1 for s in self.active_signals.values() if s.ai_decision == "WAIT"),
                 "pending": sum(1 for s in self.active_signals.values() if s.ai_decision == "PENDING"),
+            },
+            "exit_rules": {
+                "max_hold_minutes": self.MAX_HOLD_MINUTES,
+                "min_hold_minutes": self.MIN_HOLD_MINUTES,
+                "break_even_minutes": self.BREAK_EVEN_THRESHOLD_MINUTES,
+                "min_bars_check": self.MIN_BARS_BEFORE_CHECK,
             },
             "version": "3.4.0"
         }

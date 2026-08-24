@@ -65,7 +65,7 @@ EMOJI = {
     "GRADE_B": "🥈", "GRADE_C": "🥉", "DIVERGENCE": "↩️",
     "PATTERN": "🕯️", "S_R": "📊", "SESSION": "🌍", "STRUCTURE": "🏗️",
     "REGIME": "📈", "STATE": "🔄", "FETCH": "📊", "TDI": "📈",
-    "BB": "📊", "CANDLE": "🕯️", "CHEAT": "📋",
+    "BB": "📊", "CANDLE": "🕯️", "CHEAT": "📋", "EXIT": "⏰",
 }
 
 # ========== GLOBAL STATE ==========
@@ -79,6 +79,13 @@ bot_stats = {
     'ai_rejected': 0,
     'ai_waited': 0,
     'active_signals': 0,
+    'exits': {
+        'profit': 0,
+        'loss': 0,
+        'break_even': 0,
+        'exit_1h': 0,
+    },
+    'total_pnl': 0.0,
     'errors': 0,
     'version': '3.4.0',
     'strategy': 'Super TDI + Super Bollinger Bands',
@@ -89,11 +96,11 @@ bot_stats = {
         'bb_touch': True,
         'candle_shrinking': True,
         'reversal_confirmation': True,
-        'divergence': config.strategy.enable_divergence if hasattr(config.strategy, 'enable_divergence') else True,
-        'candle_patterns': config.strategy.enable_candle_patterns if hasattr(config.strategy, 'enable_candle_patterns') else True,
-        'support_resistance': config.strategy.enable_support_resistance if hasattr(config.strategy, 'enable_support_resistance') else True,
-        'bb_squeeze': config.strategy.enable_bb_squeeze if hasattr(config.strategy, 'enable_bb_squeeze') else True,
-        'session_filtering': config.strategy.enable_session_filtering if hasattr(config.strategy, 'enable_session_filtering') else True,
+        'divergence': getattr(config.strategy, 'enable_divergence', True),
+        'candle_patterns': getattr(config.strategy, 'enable_candle_patterns', True),
+        'support_resistance': getattr(config.strategy, 'enable_support_resistance', True),
+        'bb_squeeze': getattr(config.strategy, 'enable_bb_squeeze', True),
+        'session_filtering': getattr(config.strategy, 'enable_session_filtering', True),
         'ai_validation': ai_analyzer.enabled if ai_analyzer else False,
     },
 }
@@ -202,7 +209,7 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
         return None
 
     try:
-        # Check if symbol is locked
+        # Check if symbol is locked (has active signal)
         if signal_manager.is_symbol_locked(symbol):
             return None
 
@@ -211,7 +218,7 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
         if df is None:
             return None
 
-        # Create signal engine
+        # Create signal engine (use AI if enabled)
         signal_engine = SignalEngine(use_ai=ai_analyzer.enabled if ai_analyzer else False)
 
         # Process signal
@@ -261,7 +268,8 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                     raw_data=signal,
                 ):
                     bot_stats['signals_generated'] += 1
-                    bot_stats['ai_approved'] += 1 if ai_decision == 'APPROVE' else 0
+                    if ai_decision == 'APPROVE':
+                        bot_stats['ai_approved'] += 1
 
                     # Send Telegram notification with cheat sheet
                     if telegram_bot is not None and telegram_bot.enabled:
@@ -277,7 +285,7 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                                 ai_confidence=signal.get('ai_confidence', 0.8),
                                 ai_reasoning=signal.get('ai_reasoning', ''),
                                 rrr=signal.get('rrr', 2.0),
-                                total_score=signal.get('total_score', 75),
+                                total_score=signal.get('quality_score', 75),
                                 grade=signal.get('grade', 'B'),
                                 signal_strength=signal.get('signal_strength', 'SOFT'),
                                 risk_multiplier=signal.get('risk_multiplier', 1.0),
@@ -299,6 +307,8 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                                 session=signal.get('session', 'UNKNOWN'),
                                 # Cheat sheet
                                 cheat_sheet=signal.get('cheat_sheet', ''),
+                                # Hold info
+                                max_hold_minutes=60,
                             )
                         except Exception as e:
                             logger.warning(f"Telegram error for {symbol}: {e}")
@@ -312,7 +322,7 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                             print(f"\n🤖 AI Decision: {ai_decision} (Confidence: {signal.get('ai_confidence', 0.8)*100:.0f}%)")
                         print("=" * 70 + "\n")
 
-                    logger.info(f"{EMOJI['SIGNAL']} {signal.get('direction')} {symbol} @ {signal.get('entry_price', 0):.4f} | Conditions: {condition_check['conditions_met']}/{condition_check['conditions_total']} | AI: {ai_decision}")
+                    logger.info(f"{EMOJI['SIGNAL']} {signal.get('direction')} {symbol} @ {signal.get('entry_price', 0):.4f} | Conditions: {condition_check['conditions_met']}/{condition_check['conditions_total']} | AI: {ai_decision} | Max Hold: 60min")
                     return signal
 
             elif ai_decision == 'REJECT':
@@ -350,17 +360,33 @@ def check_active_signals():
             if current_price is None:
                 continue
 
-            # Check signal
+            # Check signal - the signal manager now handles all exit logic
             status, diff, updated = signal_manager.check_active_signal(
                 symbol, current_price, {}
             )
 
+            # Update stats based on exit status
             if status != "ACTIVE" and updated:
-                logger.info(f"{EMOJI['RESULT']} {symbol}: {status} | PnL: ${updated.pnl:.2f} ({updated.pnl_percent:.2f}%)")
+                # Update exit stats
+                if status == "PROFIT":
+                    bot_stats['exits']['profit'] += 1
+                elif status == "LOSS":
+                    bot_stats['exits']['loss'] += 1
+                elif status == "BREAK_EVEN":
+                    bot_stats['exits']['break_even'] += 1
+                elif status == "EXIT_1H":
+                    bot_stats['exits']['exit_1h'] += 1
+
+                bot_stats['total_pnl'] += updated.pnl
+
+                logger.info(f"{EMOJI['RESULT']} {symbol}: {status} | PnL: ${updated.pnl:.2f} ({updated.pnl_percent:.2f}%) | Hold: {updated.get_age_minutes():.1f}min")
 
                 # Send Telegram result
                 if telegram_bot is not None and telegram_bot.enabled:
                     try:
+                        # Map status to emoji
+                        status_emoji = "💰" if status == "PROFIT" else "💸" if status == "LOSS" else "⚖️" if status == "BREAK_EVEN" else "⏰"
+
                         telegram_bot.send_result(
                             symbol=symbol,
                             signal_type=signal.get('signal_type', 'UNKNOWN'),
@@ -413,6 +439,10 @@ def run_health_server():
                     'active_signals': len(signal_manager.active_signals) if signal_manager else 0,
                     'ai_enabled': ai_analyzer.enabled if ai_analyzer else False,
                     'mongodb_enabled': mongodb_client.is_available() if mongodb_client else False,
+                    'exit_rules': {
+                        'max_hold_minutes': 60,
+                        'min_hold_minutes': 15,
+                    },
                     'features': bot_stats['features']
                 }
                 self.wfile.write(json.dumps(status_data, indent=2).encode())
@@ -459,14 +489,16 @@ def main():
     logger.info(f"  - AI Validation: {'✅' if ai_analyzer.enabled else '❌'}")
     logger.info(f"  - MongoDB: {'✅' if mongodb_client.is_available() else '❌'}")
     logger.info("=" * 70)
+    logger.info("⏰ Exit Rules:")
+    logger.info("  - Max Hold: 60 minutes (1 hour)")
+    logger.info("  - Min Hold: 15 minutes")
+    logger.info("  - TP/SL Check: After 15 minutes")
+    logger.info("  - Break-Even: At 1 hour")
+    logger.info("=" * 70)
     logger.info(f"📈 Symbols: {config.market.symbols}")
     logger.info(f"⏱️ Timeframe: {config.market.timeframe}")
     logger.info(f"📋 HTF: {config.market.htf_timeframe}")
-
-    # ✅ FIXED: Access run_mode from deployment
-    run_mode = config.deployment.run_mode.value if hasattr(config.deployment, 'run_mode') else "UNKNOWN"
-    logger.info(f"🎯 Run Mode: {run_mode}")
-
+    logger.info(f"🎯 Run Mode: {config.deployment.run_mode.value if hasattr(config.deployment, 'run_mode') else 'UNKNOWN'}")
     min_conditions = getattr(config.strategy, 'min_conditions_for_signal', 3)
     logger.info(f"📊 Min Conditions: {min_conditions}/5")
     logger.info("=" * 70)
@@ -498,6 +530,7 @@ def main():
                 'rrr_range': f"{getattr(config.strategy, 'min_rrr', 1.5)}-{getattr(config.strategy, 'max_rrr', 4.0)}",
                 'bb_period': getattr(config.strategy, 'bb_period', 34),
                 'bb_deviation': getattr(config.strategy, 'bb_deviation', 1.75),
+                'max_hold_minutes': 60,
             }
         )
 
@@ -517,7 +550,7 @@ def main():
                 except Exception as e:
                     logger.error(f"Symbol {symbol} error: {e}")
 
-            # Check active signals
+            # Check active signals (this handles exits)
             check_active_signals()
 
             # Log status every 10 cycles
@@ -528,6 +561,8 @@ def main():
                     f"{bot_stats['ai_approved']} approved, "
                     f"{bot_stats['ai_rejected']} rejected, "
                     f"{bot_stats['active_signals']} active, "
+                    f"Exits: {bot_stats['exits']['profit']}P/{bot_stats['exits']['loss']}L/{bot_stats['exits']['break_even']}BE/{bot_stats['exits']['exit_1h']}1h, "
+                    f"PnL: ${bot_stats['total_pnl']:.2f}, "
                     f"{bot_stats['errors']} errors"
                 )
 
@@ -555,17 +590,23 @@ def main():
     except Exception as e:
         logger.warning(f"Cleanup error: {e}")
 
-    # Send shutdown message
+    # Send shutdown message with stats
     if telegram_bot.enabled:
         telegram_bot.send_shutdown_message({
             'signals_generated': bot_stats['signals_generated'],
             'ai_approved': bot_stats['ai_approved'],
             'ai_rejected': bot_stats['ai_rejected'],
-            'total_pnl': 0,
+            'total_pnl': bot_stats['total_pnl'],
             'avg_rrr': 0,
+            'exits': bot_stats['exits'],
         })
 
-    logger.info(f"{EMOJI['RESULT']} Final stats: {bot_stats['signals_generated']} signals generated")
+    logger.info(f"{EMOJI['RESULT']} Final stats:")
+    logger.info(f"  Signals Generated: {bot_stats['signals_generated']}")
+    logger.info(f"  AI Approved: {bot_stats['ai_approved']}")
+    logger.info(f"  AI Rejected: {bot_stats['ai_rejected']}")
+    logger.info(f"  Total PnL: ${bot_stats['total_pnl']:.2f}")
+    logger.info(f"  Exits: {bot_stats['exits']['profit']}P / {bot_stats['exits']['loss']}L / {bot_stats['exits']['break_even']}BE / {bot_stats['exits']['exit_1h']}1h")
     logger.info(f"{EMOJI['SUCCESS']} Bot stopped")
 
 
