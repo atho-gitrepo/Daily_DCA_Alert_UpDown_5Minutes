@@ -1,6 +1,6 @@
 """
 Configuration management for the AI Trading Bot.
-Version: 3.4.0 - ENHANCED: Added v3.4.0 signal engine config + PRODUCTION support
+Version: 3.4.0 - ALIGNED: Super TDI + Super Bollinger Bands Strategy
 """
 
 import os
@@ -89,119 +89,119 @@ class BinanceConfig:
 class MarketConfig:
     quote_asset: str = "USDT"
     symbols: List[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
-    timeframe: str = "15m"
-    htf_timeframe: str = "1h"
-    ltf_timeframe: str = "5m"
+    timeframe: str = "5m"  # Super TDI + Super BB uses 5m for entries
+    htf_timeframe: str = "1h"  # Higher timeframe for trend context
+    ltf_timeframe: str = "1m"  # Ultra LTF for precise entry
     ultra_ltf_timeframe: str = "1m"
     ultra_htf_timeframe: str = "4h"
-    polling_interval_seconds: int = 15
+    polling_interval_seconds: int = 30  # 30 seconds for 5m strategy
 
 
 @dataclass
 class StrategyConfig:
-    """v3.4.0 Strategy Configuration."""
+    """Super TDI + Super Bollinger Bands Strategy Configuration."""
 
-    # === Signal Engine v3.4.0 ===
-    min_setup_score: int = 70
-    min_trigger_score: int = 70
-    counter_trend_min_score: int = 82
-    max_signals_per_hour: int = 2
+    # ===== TDI Levels (Super TDI) =====
+    tdi_oversold: float = 25.0      # Hard Buy Zone - 2x risk
+    tdi_soft_buy: float = 35.0      # Soft Buy Zone - 1x risk
+    tdi_center_line: float = 50.0   # No Trade Zone - Wait!
+    tdi_soft_sell: float = 65.0     # Soft Sell Zone - 1x risk
+    tdi_overbought: float = 75.0    # Hard Sell Zone - 2x risk
+    tdi_no_trade_start: float = 50.0
+    tdi_no_trade_end: float = 65.0
 
-    # === Setup Expiry ===
-    setup_expiry_seconds: int = 300  # 5 minutes
-    trigger_expiry_seconds: int = 120  # 2 minutes
+    # ===== Bollinger Bands (Super BB) =====
+    bb_period: int = 34
+    bb_deviation: float = 1.750
+    bb_trend_period: int = 9
 
-    # === Entry Protection ===
-    max_entry_distance_atr: float = 0.25
+    # ===== Strategy Conditions =====
+    # Minimum conditions required (out of 5) for a signal
+    min_conditions_for_signal: int = 3
+    # Strong signal requires at least 4 conditions
+    strong_signal_min_conditions: int = 4
 
-    # === ATR Risk ===
+    # ===== Signal Strength =====
+    hard_signal_min_conditions: int = 4  # HARD signal needs 4+ conditions
+    soft_signal_min_conditions: int = 3  # SOFT signal needs 3+ conditions
+
+    # ===== Risk Multipliers =====
+    hard_signal_risk_multiplier: float = 2.0
+    soft_signal_risk_multiplier: float = 1.0
+    weak_signal_risk_multiplier: float = 0.5
+
+    # ===== ATR Risk =====
     atr_period: int = 14
     sl_multiplier: float = 1.5
-    tp_multiplier: float = 3.0
+    tp_multiplier: float = 2.5  # Default RRR for Super BB strategy
 
-    # === TDI Levels ===
-    tdi_oversold: float = 25.0
-    tdi_soft_buy: float = 35.0
-    tdi_soft_sell: float = 65.0
-    tdi_overbought: float = 75.0
+    # ===== Entry Protection ====
+    max_entry_distance_atr: float = 0.25
 
-    # === Scoring Weights ===
-    score_weights: Dict[str, float] = field(default_factory=lambda: {
-        'htf_regime': 20,
-        'location': 20,
-        'momentum': 20,
-        'trigger': 25,
-        'volume': 15,
-    })
-
-    # === Grade Thresholds ===
+    # ===== Grade Thresholds =====
     grade_a_plus_threshold: int = 90
     grade_a_threshold: int = 82
     grade_b_plus_threshold: int = 75
     grade_b_threshold: int = 70
     grade_c_threshold: int = 60
 
-    # === Signal Lifecycle ===
+    # ===== Signal Lifecycle =====
     symbol_cooldown_minutes: int = 30
     break_even_threshold_minutes: int = 480  # 8 hours
     min_bars_before_check: int = 2
 
-    # === Features ===
+    # ===== Features =====
     enable_divergence: bool = True
     enable_candle_patterns: bool = True
     enable_support_resistance: bool = True
     enable_bb_squeeze: bool = True
     enable_session_filtering: bool = True
-    enable_htf_regime: bool = True
-    enable_structure_analysis: bool = True
     enable_volume_gate: bool = True
-    enable_ltf_confirmation: bool = True
 
-    # === Multi-Timeframe Settings ===
+    # ===== Multi-Timeframe Settings =====
+    # Super TDI + Super BB uses 5m for entries, 1h for context
     require_ltf_confirmation: bool = True
     ltf_min_confirmation: float = 0.65
-    require_htf_alignment: bool = True
 
-    # === Risk ===
+    # ===== Risk =====
     default_rrr: float = 2.0
     min_rrr: float = 1.5
     max_rrr: float = 4.0
     risk_per_trade_percent: float = 0.5
     max_daily_trades: int = 5
 
-    # === AI ===
+    # ===== AI =====
     ai_enabled: bool = True
     ai_min_interval_seconds: int = 120
     ai_cache_ttl: int = 600
 
-    # === Fee ===
+    # ===== Fee =====
     fee_impact: float = 0.0011
 
-    # === Signal Settings ===
+    # ===== Signal Settings =====
     min_quality_score: int = 50
     min_signal_score: int = 70
     signal_cooldown_minutes: int = 30
     max_signals_per_cycle: int = 5
 
-    # === Leverage ===
+    # ===== Leverage =====
     default_leverage: int = 5
     min_leverage: int = 1
     max_leverage: int = 20
     use_futures: bool = True
 
-    # === Session Multipliers ===
+    # ===== Session Multipliers =====
     session_multipliers: Dict[str, float] = field(default_factory=lambda: {
-        "ASIAN": 0.7,
-        "LONDON": 1.0,
-        "NY": 1.2,
-        "LATE": 0.8,
+        "ASIAN": 0.7,      # Lower confidence in Asian session
+        "LONDON": 1.0,     # Normal
+        "NY": 1.2,         # Higher confidence during NY session
+        "LATE": 0.8,       # Lower confidence late session
     })
 
     # ===== PRODUCTION-SPECIFIC SETTINGS =====
-    # These are more conservative for production
-    production_position_size_multiplier: float = 0.5  # 50% of normal position size
-    production_max_daily_trades: int = 3  # Fewer trades in production
-    production_min_setup_score: int = 75  # Higher threshold for production
+    production_position_size_multiplier: float = 0.5
+    production_max_daily_trades: int = 3
+    production_min_setup_score: int = 75
     production_require_extra_confirmation: bool = True
 
 
@@ -220,6 +220,7 @@ class PerformanceConfig:
 
 @dataclass
 class GroqConfig:
+    """Groq AI configuration."""
     api_key: str = ""
     model: str = "llama-3.3-70b-versatile"
     temperature: float = 0.3
@@ -228,6 +229,7 @@ class GroqConfig:
 
 @dataclass
 class TelegramConfig:
+    """Telegram configuration."""
     bot_token: str = ""
     chat_id: str = ""
     enabled: bool = False
@@ -274,13 +276,13 @@ class DeploymentConfig:
     # Production-specific
     use_sentry: bool = False
     sentry_dsn: str = ""
-    log_level_production: str = "WARNING"  # Less verbose in production
+    log_level_production: str = "WARNING"
 
 
 # ------------------- Main Config Class -------------------
 
 class Config:
-    """Complete configuration with v3.4.0 support."""
+    """Complete configuration for Super TDI + Super BB strategy."""
 
     VERSION = "3.4.0"
 
@@ -306,29 +308,30 @@ class Config:
         logger.info(f"Config initialized v{self.VERSION}")
         logger.info(f"  - Environment: {env}")
         logger.info(f"  - Run Mode: {run_mode}")
+        logger.info(f"  - Strategy: Super TDI + Super Bollinger Bands")
 
         if run_mode == "PRODUCTION":
             logger.info(f"🔴 PRODUCTION MODE ACTIVE - Using REAL funds!")
             logger.info(f"  - Position Size: {self.get_position_size_multiplier()*100:.0f}%")
             logger.info(f"  - Max Daily Trades: {self.strategy.max_daily_trades}")
-            logger.info(f"  - Setup Score Required: {self.strategy.min_setup_score}")
+            logger.info(f"  - Min Conditions Required: {self.strategy.min_conditions_for_signal}")
             logger.info(f"  - Extra Confirmation: {self.strategy.production_require_extra_confirmation}")
         elif run_mode == "DEMO":
             logger.info(f"🎮 DEMO MODE - Using synthetic data (NO real trades)")
         elif run_mode == "BACKTEST":
             logger.info(f"📊 BACKTEST MODE - Historical data only")
 
-        logger.info(f"✅ v3.4.0 Features enabled:")
-        logger.info(f"  - Min Setup Score: {self.strategy.min_setup_score}")
-        logger.info(f"  - Min Trigger Score: {self.strategy.min_trigger_score}")
-        logger.info(f"  - Counter-Trend Min: {self.strategy.counter_trend_min_score}")
-        logger.info(f"  - Max Entry Distance: {self.strategy.max_entry_distance_atr} ATR")
-        logger.info(f"  - Grade A: {self.strategy.grade_a_threshold}+")
-        logger.info(f"  - Grade A+: {self.strategy.grade_a_plus_threshold}+")
-        logger.info(f"  - HTF Regime: {self.strategy.enable_htf_regime}")
-        logger.info(f"  - Structure Analysis: {self.strategy.enable_structure_analysis}")
-        logger.info(f"  - Volume Gate: {self.strategy.enable_volume_gate}")
-        logger.info(f"  - LTF Confirmation: {self.strategy.enable_ltf_confirmation}")
+        logger.info(f"✅ Super TDI + Super BB Features:")
+        logger.info(f"  - TDI Levels: {self.strategy.tdi_oversold}/{self.strategy.tdi_soft_buy}/{self.strategy.tdi_center_line}/{self.strategy.tdi_soft_sell}/{self.strategy.tdi_overbought}")
+        logger.info(f"  - BB Period: {self.strategy.bb_period}, Deviation: {self.strategy.bb_deviation}")
+        logger.info(f"  - Min Conditions: {self.strategy.min_conditions_for_signal}")
+        logger.info(f"  - Hard Signal: {self.strategy.hard_signal_min_conditions}+ conditions (2x risk)")
+        logger.info(f"  - Soft Signal: {self.strategy.soft_signal_min_conditions}+ conditions (1x risk)")
+        logger.info(f"  - Divergence: {self.strategy.enable_divergence}")
+        logger.info(f"  - Candle Patterns: {self.strategy.enable_candle_patterns}")
+        logger.info(f"  - S/R Levels: {self.strategy.enable_support_resistance}")
+        logger.info(f"  - BB Squeeze: {self.strategy.enable_bb_squeeze}")
+        logger.info(f"  - Session Filtering: {self.strategy.enable_session_filtering}")
 
     def _load_from_env(self):
         # ====== BINANCE ======
@@ -347,76 +350,113 @@ class Config:
         self.market = MarketConfig(
             quote_asset=os.getenv("QUOTE_ASSET", "USDT"),
             symbols=safe_list_env("SYMBOLS", default_symbols),
-            timeframe=os.getenv("TIMEFRAME", "15m"),
+            timeframe=os.getenv("TIMEFRAME", "5m"),
             htf_timeframe=os.getenv("HTF_TIMEFRAME", "1h"),
-            ltf_timeframe=os.getenv("LTF_TIMEFRAME", "5m"),
+            ltf_timeframe=os.getenv("LTF_TIMEFRAME", "1m"),
             ultra_ltf_timeframe=os.getenv("ULTRA_LTF_TIMEFRAME", "1m"),
             ultra_htf_timeframe=os.getenv("ULTRA_HTF_TIMEFRAME", "4h"),
-            polling_interval_seconds=safe_int_env("POLLING_INTERVAL_SECONDS", 15, min_val=1, max_val=60),
+            polling_interval_seconds=safe_int_env("POLLING_INTERVAL_SECONDS", 30, min_val=1, max_val=60),
         )
 
-        # ====== STRATEGY v3.4.0 ======
+        # ====== STRATEGY ======
         run_mode = os.getenv("RUN_MODE", "DEMO").upper().strip()
         is_production = run_mode == "PRODUCTION"
 
         self.strategy = StrategyConfig(
-            min_setup_score=safe_int_env("MIN_SETUP_SCORE", 75 if is_production else 70, min_val=50, max_val=90),
-            min_trigger_score=safe_int_env("MIN_TRIGGER_SCORE", 75 if is_production else 70, min_val=50, max_val=90),
-            counter_trend_min_score=safe_int_env("COUNTER_TREND_MIN_SCORE", 82, min_val=70, max_val=95),
-            max_signals_per_hour=safe_int_env("MAX_SIGNALS_PER_HOUR", 2, min_val=1, max_val=10),
-            setup_expiry_seconds=safe_int_env("SETUP_EXPIRY_SECONDS", 300, min_val=60, max_val=600),
-            trigger_expiry_seconds=safe_int_env("TRIGGER_EXPIRY_SECONDS", 120, min_val=30, max_val=300),
-            max_entry_distance_atr=safe_float_env("MAX_ENTRY_DISTANCE_ATR", 0.25, min_val=0.05, max_val=0.75),
-            atr_period=safe_int_env("ATR_PERIOD", 14, min_val=5, max_val=30),
-            sl_multiplier=safe_float_env("SL_MULTIPLIER", 1.5, min_val=0.5, max_val=3.0),
-            tp_multiplier=safe_float_env("TP_MULTIPLIER", 3.0, min_val=1.0, max_val=5.0),
+            # TDI Levels
             tdi_oversold=safe_float_env("TDI_OVERSOLD", 25.0, min_val=15, max_val=35),
             tdi_soft_buy=safe_float_env("TDI_SOFT_BUY", 35.0, min_val=25, max_val=45),
+            tdi_center_line=safe_float_env("TDI_CENTER_LINE", 50.0, min_val=45, max_val=55),
             tdi_soft_sell=safe_float_env("TDI_SOFT_SELL", 65.0, min_val=55, max_val=75),
             tdi_overbought=safe_float_env("TDI_OVERBOUGHT", 75.0, min_val=65, max_val=85),
+            tdi_no_trade_start=safe_float_env("TDI_NO_TRADE_START", 50.0, min_val=45, max_val=55),
+            tdi_no_trade_end=safe_float_env("TDI_NO_TRADE_END", 65.0, min_val=55, max_val=75),
+
+            # Bollinger Bands
+            bb_period=safe_int_env("BB_PERIOD", 34, min_val=10, max_val=50),
+            bb_deviation=safe_float_env("BB_DEVIATION", 1.750, min_val=1.0, max_val=3.0),
+            bb_trend_period=safe_int_env("BB_TREND_PERIOD", 9, min_val=3, max_val=20),
+
+            # Strategy Conditions
+            min_conditions_for_signal=safe_int_env("MIN_CONDITIONS_FOR_SIGNAL", 3, min_val=2, max_val=5),
+            strong_signal_min_conditions=safe_int_env("STRONG_SIGNAL_MIN_CONDITIONS", 4, min_val=3, max_val=5),
+
+            # Signal Strength
+            hard_signal_min_conditions=safe_int_env("HARD_SIGNAL_MIN_CONDITIONS", 4, min_val=3, max_val=5),
+            soft_signal_min_conditions=safe_int_env("SOFT_SIGNAL_MIN_CONDITIONS", 3, min_val=2, max_val=4),
+
+            # Risk Multipliers
+            hard_signal_risk_multiplier=safe_float_env("HARD_SIGNAL_RISK_MULTIPLIER", 2.0, min_val=1.0, max_val=3.0),
+            soft_signal_risk_multiplier=safe_float_env("SOFT_SIGNAL_RISK_MULTIPLIER", 1.0, min_val=0.5, max_val=2.0),
+            weak_signal_risk_multiplier=safe_float_env("WEAK_SIGNAL_RISK_MULTIPLIER", 0.5, min_val=0.1, max_val=1.0),
+
+            # ATR Risk
+            atr_period=safe_int_env("ATR_PERIOD", 14, min_val=5, max_val=30),
+            sl_multiplier=safe_float_env("SL_MULTIPLIER", 1.5, min_val=0.5, max_val=3.0),
+            tp_multiplier=safe_float_env("TP_MULTIPLIER", 2.5, min_val=1.0, max_val=5.0),
+
+            # Entry Protection
+            max_entry_distance_atr=safe_float_env("MAX_ENTRY_DISTANCE_ATR", 0.25, min_val=0.05, max_val=0.75),
+
+            # Grade Thresholds
             grade_a_plus_threshold=safe_int_env("GRADE_A_PLUS_THRESHOLD", 90, min_val=80, max_val=98),
             grade_a_threshold=safe_int_env("GRADE_A_THRESHOLD", 82, min_val=70, max_val=95),
             grade_b_plus_threshold=safe_int_env("GRADE_B_PLUS_THRESHOLD", 75, min_val=65, max_val=85),
             grade_b_threshold=safe_int_env("GRADE_B_THRESHOLD", 70, min_val=60, max_val=80),
             grade_c_threshold=safe_int_env("GRADE_C_THRESHOLD", 60, min_val=50, max_val=75),
+
+            # Signal Lifecycle
             symbol_cooldown_minutes=safe_int_env("SYMBOL_COOLDOWN_MINUTES", 30, min_val=5, max_val=120),
             break_even_threshold_minutes=safe_int_env("BREAK_EVEN_THRESHOLD_MINUTES", 480, min_val=30, max_val=720),
             min_bars_before_check=safe_int_env("MIN_BARS_BEFORE_CHECK", 2, min_val=1, max_val=5),
+
+            # Features
             enable_divergence=safe_bool_env("ENABLE_DIVERGENCE", True),
             enable_candle_patterns=safe_bool_env("ENABLE_CANDLE_PATTERNS", True),
             enable_support_resistance=safe_bool_env("ENABLE_SR", True),
             enable_bb_squeeze=safe_bool_env("ENABLE_BB_SQUEEZE", True),
             enable_session_filtering=safe_bool_env("ENABLE_SESSION_FILTERING", True),
-            enable_htf_regime=safe_bool_env("ENABLE_HTF_REGIME", True),
-            enable_structure_analysis=safe_bool_env("ENABLE_STRUCTURE_ANALYSIS", True),
             enable_volume_gate=safe_bool_env("ENABLE_VOLUME_GATE", True),
-            enable_ltf_confirmation=safe_bool_env("ENABLE_LTF_CONFIRMATION", True),
+
+            # Multi-Timeframe
             require_ltf_confirmation=safe_bool_env("REQUIRE_LTF_CONFIRMATION", True),
             ltf_min_confirmation=safe_float_env("LTF_MIN_CONFIRMATION", 0.65, min_val=0.4, max_val=0.9),
-            require_htf_alignment=safe_bool_env("REQUIRE_HTF_ALIGNMENT", True),
+
+            # Risk
             default_rrr=safe_float_env("DEFAULT_RRR", 2.0, min_val=1.0, max_val=5.0),
             min_rrr=safe_float_env("MIN_RRR", 1.5, min_val=1.0, max_val=3.0),
             max_rrr=safe_float_env("MAX_RRR", 4.0, min_val=2.0, max_val=6.0),
             risk_per_trade_percent=safe_float_env("RISK_PER_TRADE_PERCENT", 0.5, min_val=0.01, max_val=5.0),
             max_daily_trades=safe_int_env("MAX_DAILY_TRADES", 3 if is_production else 5, min_val=1, max_val=30),
+
+            # AI
             ai_enabled=safe_bool_env("AI_ENABLED", True),
             ai_min_interval_seconds=safe_int_env("AI_MIN_INTERVAL_SECONDS", 120, min_val=30, max_val=600),
             ai_cache_ttl=safe_int_env("AI_CACHE_TTL", 600, min_val=60, max_val=3600),
+
+            # Fee
             fee_impact=safe_float_env("FEE_IMPACT", 0.0011, min_val=0.0005, max_val=0.005),
+
+            # Signal Settings
             min_quality_score=safe_int_env("MIN_QUALITY_SCORE", 50, min_val=30, max_val=90),
             min_signal_score=safe_int_env("MIN_SIGNAL_SCORE", 70, min_val=40, max_val=95),
             signal_cooldown_minutes=safe_int_env("SIGNAL_COOLDOWN_MINUTES", 30, min_val=1, max_val=60),
             max_signals_per_cycle=safe_int_env("MAX_SIGNALS_PER_CYCLE", 3, min_val=1, max_val=10),
+
+            # Leverage
             default_leverage=safe_int_env("DEFAULT_LEVERAGE", 5, min_val=1, max_val=50),
             min_leverage=safe_int_env("MIN_LEVERAGE", 1, min_val=1, max_val=10),
             max_leverage=safe_int_env("MAX_LEVERAGE", 20, min_val=1, max_val=100),
             use_futures=safe_bool_env("USE_FUTURES", True),
+
+            # Session Multipliers
             session_multipliers={
                 "ASIAN": safe_float_env("SESSION_ASIAN_MULTIPLIER", 0.7, min_val=0.3, max_val=1.0),
                 "LONDON": safe_float_env("SESSION_LONDON_MULTIPLIER", 1.0, min_val=0.5, max_val=1.5),
                 "NY": safe_float_env("SESSION_NY_MULTIPLIER", 1.2, min_val=0.5, max_val=1.5),
                 "LATE": safe_float_env("SESSION_LATE_MULTIPLIER", 0.8, min_val=0.3, max_val=1.0),
             },
+
             # Production settings
             production_position_size_multiplier=safe_float_env("PRODUCTION_POSITION_SIZE_MULTIPLIER", 0.5, min_val=0.1, max_val=1.0),
             production_max_daily_trades=safe_int_env("PRODUCTION_MAX_DAILY_TRADES", 3, min_val=1, max_val=10),
@@ -557,6 +597,12 @@ class Config:
         if self.strategy.min_rrr < 1.0:
             warnings.append(f"MIN_RRR ({self.strategy.min_rrr}) below 1.0")
 
+        # Validate strategy conditions
+        if self.strategy.min_conditions_for_signal < 2:
+            warnings.append(f"MIN_CONDITIONS_FOR_SIGNAL ({self.strategy.min_conditions_for_signal}) is below 2 (recommended 3)")
+        if self.strategy.min_conditions_for_signal > 4:
+            warnings.append(f"MIN_CONDITIONS_FOR_SIGNAL ({self.strategy.min_conditions_for_signal}) is high (may miss signals)")
+
         # Production-specific validation
         if self.deployment.run_mode == RunMode.PRODUCTION:
             if self.strategy.risk_per_trade_percent > 2.0:
@@ -588,7 +634,6 @@ class Config:
         return self.deployment.run_mode == RunMode.BACKTEST
 
     def is_production_mode(self) -> bool:
-        """Check if running in PRODUCTION mode."""
         return self.deployment.run_mode == RunMode.PRODUCTION
 
     def get_position_size_multiplier(self) -> float:
@@ -598,7 +643,7 @@ class Config:
         return 1.0
 
     def get_grade(self, score: int) -> str:
-        """Get grade based on v3.4.0 thresholds."""
+        """Get grade based on thresholds."""
         if score >= self.strategy.grade_a_plus_threshold:
             return "A+"
         elif score >= self.strategy.grade_a_threshold:

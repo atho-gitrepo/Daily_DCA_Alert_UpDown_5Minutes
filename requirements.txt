@@ -1,41 +1,21 @@
-# Core Dependencies - ALL PINNED
+# Core Dependencies
 python-binance==1.0.19
 pandas==2.0.3
 numpy==1.24.3
 python-dotenv==1.0.0
+requests==2.31.0
+scipy>=1.10.0
 
-# AI Integration
+# Groq AI
 groq==0.4.2
 httpx==0.25.1
 
 # Telegram
 python-telegram-bot==20.6
 
-# MongoDB
+# MongoDB (Optional)
 pymongo==4.6.1
-dnspython==2.4.2
-
-# HTTP & Networking
-requests==2.31.0
-urllib3==2.0.7
-aiohttp==3.9.1
-asyncio==3.4.3
 
 # Utilities
-python-dateutil==2.8.2
-pytz==2023.3
-
-# Logging & Monitoring
-prometheus-client==0.17.1
-redis==5.0.1
-
-# Database (Optional)
-sqlalchemy==2.0.22
-psycopg2-binary==2.9.9
-
-# Development (Optional)
-pytest==7.4.3
-black==23.11.0
-flake8==6.1.0
-mypy==1.7.0
-scipy>=1.10.0
+aiohttp==3.9.1
+asyncio==3.4.3

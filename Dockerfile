@@ -2,34 +2,30 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Minimal dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    gcc \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Copy requirements and install
 COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# ============================================================
-# ✅ PINNED FIX: Install all pinned versions
-# ============================================================
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Force numpy to the correct version (in case any dependency tries to upgrade)
-RUN pip install --force-reinstall --no-deps numpy==1.24.3
-
-# Copy application code
+# Copy application
 COPY . .
 
 # Create directories
-RUN mkdir -p logs data backups models
+RUN mkdir -p logs data backups
 
-# Expose ports
-EXPOSE 8080 9090
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8080/health')" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
-# Run the bot
-CMD ["python", "main_v34.py"]
+# Expose port
+EXPOSE 8080
+
+# Run
+ENTRYPOINT ["./entrypoint.sh"]

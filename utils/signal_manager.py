@@ -1,6 +1,6 @@
 """
 Signal Manager - Handles signal lifecycle, debouncing, and duplicate prevention
-Version: 3.4.0 - UPDATED: Added v3.4.0 signal fields
+Version: 3.4.0 - ALIGNED WITH SUPER TDI + SUPER BB STRATEGY
 """
 
 import logging
@@ -32,6 +32,9 @@ EMOJI = {
     # v3.4.0
     "DIVERGENCE": "↩️", "PATTERN": "🕯️", "S_R": "📊", "SESSION": "🌍",
     "STRUCTURE": "🏗️", "REGIME": "📈", "STATE": "🔄",
+    # Super TDI + BB
+    "TDI": "📈", "BB": "📊", "CANDLE": "🕯️", "CHEAT": "📋",
+    "AI": "🤖", "APPROVE": "✅", "REJECT": "🚫",
 }
 
 
@@ -45,11 +48,13 @@ class TradeLifecycle(str, Enum):
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
     INVALIDATED = "INVALIDATED"
+    AI_REJECTED = "AI_REJECTED"
+    AI_WAITING = "AI_WAITING"
 
 
 @dataclass
 class SignalData:
-    """Signal data structure with v3.4.0 fields."""
+    """Signal data structure aligned with Super TDI + Super BB strategy."""
     symbol: str
     signal_type: str
     entry_price: float
@@ -64,48 +69,57 @@ class SignalData:
     pnl_percent: float = 0.0
     fees: float = 0.0
 
-    # v3.3.0 fields
+    # Super TDI fields
     tdi_level: float = 0.0
     tdi_zone: str = "NEUTRAL"
+    tdi_zone_description: str = ""
+    tdi_fast: float = 0.0
+    tdi_slow: float = 0.0
+    tdi_bullish_cross: bool = False
+    tdi_bearish_cross: bool = False
+
+    # Super Bollinger Bands fields
+    bb_position: float = 0.5
+    bb_touch_lower: bool = False
+    bb_touch_upper: bool = False
+    bb_candles_shrinking: bool = False
+    bb_reversal_confirm: bool = False
+    bb_squeeze: bool = False
+
+    # Strategy checklist (5 conditions)
+    condition_1_tdi_zone: bool = False
+    condition_2_tdi_cross: bool = False
+    condition_3_bb_touch: bool = False
+    condition_4_candles_shrinking: bool = False
+    condition_5_reversal_confirm: bool = False
+    conditions_met: int = 0
+    conditions_total: int = 5
+
+    # Cheat sheet
+    cheat_sheet: str = ""
+
+    # AI fields
+    ai_decision: str = "PENDING"
+    ai_confidence: float = 0.0
+    ai_reasoning: str = ""
+    ai_validated: bool = False
+    ai_response_time_ms: float = 0.0
+
+    # Risk
     rrr: float = 0.0
     signal_strength: str = "SOFT"
     risk_multiplier: float = 1.0
-    ai_decision: str = "APPROVE"
-    ai_confidence: float = 0.0
-    ai_validated: bool = False
+
+    # Quality
     quality_score: int = 50
     total_score: int = 0
     grade: str = ""
-    ltf_confirmed: bool = False
-    ltf_confidence: float = 0.0
-    htf_trend: str = "NEUTRAL"
-    htf_aligned: bool = False
-    component_scores: Dict[str, float] = field(default_factory=dict)
 
-    # v3.4.0 fields
-    setup_score: int = 0
-    trigger_score: int = 0
-    final_score: int = 0
-    entry_grade: str = ""
-    state: str = "ACTIVE"
-    regime: str = "NEUTRAL"
-    structure_direction: str = "NEUTRAL"
-    entry_distance_atr: float = 0.0
-    ideal_entry: float = 0.0
-    atr: float = 0.0
-
-    # Feature flags
+    # Features
     divergence_detected: bool = False
     divergence_type: str = ""
-    divergence_strength: float = 0.0
     candle_pattern: str = "NONE"
-    candle_pattern_confidence: float = 0.0
     sr_confirmed: bool = False
-    sr_position: str = ""
-    nearest_support: float = 0.0
-    nearest_resistance: float = 0.0
-    bb_squeeze: bool = False
-    bb_squeeze_strength: float = 0.0
     session: str = "UNKNOWN"
     session_multiplier: float = 1.0
 
@@ -134,36 +148,47 @@ class SignalData:
             "pnl": self.pnl,
             "pnl_percent": self.pnl_percent,
             "fees": self.fees,
+            # Super TDI
             "tdi_level": self.tdi_level,
             "tdi_zone": self.tdi_zone,
+            "tdi_zone_description": self.tdi_zone_description,
+            "tdi_fast": self.tdi_fast,
+            "tdi_slow": self.tdi_slow,
+            "tdi_bullish_cross": self.tdi_bullish_cross,
+            "tdi_bearish_cross": self.tdi_bearish_cross,
+            # Super BB
+            "bb_position": self.bb_position,
+            "bb_touch_lower": self.bb_touch_lower,
+            "bb_touch_upper": self.bb_touch_upper,
+            "bb_candles_shrinking": self.bb_candles_shrinking,
+            "bb_reversal_confirm": self.bb_reversal_confirm,
+            "bb_squeeze": self.bb_squeeze,
+            # Conditions
+            "conditions_met": self.conditions_met,
+            "condition_1_tdi_zone": self.condition_1_tdi_zone,
+            "condition_2_tdi_cross": self.condition_2_tdi_cross,
+            "condition_3_bb_touch": self.condition_3_bb_touch,
+            "condition_4_candles_shrinking": self.condition_4_candles_shrinking,
+            "condition_5_reversal_confirm": self.condition_5_reversal_confirm,
+            "cheat_sheet": self.cheat_sheet[:500] if self.cheat_sheet else "",
+            # AI
+            "ai_decision": self.ai_decision,
+            "ai_confidence": self.ai_confidence,
+            "ai_reasoning": self.ai_reasoning[:200] if self.ai_reasoning else "",
+            "ai_validated": self.ai_validated,
+            "ai_response_time_ms": self.ai_response_time_ms,
+            # Risk
             "rrr": self.rrr,
             "signal_strength": self.signal_strength,
             "risk_multiplier": self.risk_multiplier,
             "quality_score": self.quality_score,
             "total_score": self.total_score,
             "grade": self.grade,
-            "ltf_confirmed": self.ltf_confirmed,
-            "ltf_confidence": self.ltf_confidence,
-            "htf_trend": self.htf_trend,
-            "htf_aligned": self.htf_aligned,
-            "component_scores": self.component_scores,
-            # v3.4.0
-            "setup_score": self.setup_score,
-            "trigger_score": self.trigger_score,
-            "final_score": self.final_score,
-            "entry_grade": self.entry_grade,
-            "state": self.state,
-            "regime": self.regime,
-            "structure_direction": self.structure_direction,
-            "entry_distance_atr": self.entry_distance_atr,
-            "ideal_entry": self.ideal_entry,
-            "atr": self.atr,
             # Features
             "divergence_detected": self.divergence_detected,
             "divergence_type": self.divergence_type,
             "candle_pattern": self.candle_pattern,
             "sr_confirmed": self.sr_confirmed,
-            "bb_squeeze": self.bb_squeeze,
             "session": self.session,
             "session_multiplier": self.session_multiplier,
             "bars_held": self.bar_count,
@@ -191,6 +216,21 @@ class SignalData:
     def is_hard_signal(self) -> bool:
         return self.signal_strength == "HARD"
 
+    def get_conditions_summary(self) -> str:
+        """Get summary of conditions met."""
+        conditions = []
+        if self.condition_1_tdi_zone:
+            conditions.append("✅ TDI Zone")
+        if self.condition_2_tdi_cross:
+            conditions.append("✅ TDI Cross")
+        if self.condition_3_bb_touch:
+            conditions.append("✅ BB Touch")
+        if self.condition_4_candles_shrinking:
+            conditions.append("✅ Candles Shrinking")
+        if self.condition_5_reversal_confirm:
+            conditions.append("✅ Reversal Confirm")
+        return f"{len(conditions)}/{self.conditions_total}: " + " | ".join(conditions) if conditions else "No conditions met"
+
     def get_feature_summary(self) -> str:
         features = []
         if self.divergence_detected:
@@ -205,10 +245,21 @@ class SignalData:
             features.append(f"SES:{self.session}")
         return " | ".join(features) if features else "None"
 
+    def get_ai_summary(self) -> str:
+        """Get AI decision summary."""
+        if self.ai_decision == "APPROVE":
+            return f"🤖 APPROVED (Conf: {self.ai_confidence*100:.0f}%)"
+        elif self.ai_decision == "REJECT":
+            return f"🚫 REJECTED: {self.ai_reasoning[:50]}..."
+        elif self.ai_decision == "WAIT":
+            return f"⏳ WAITING: {self.ai_reasoning[:50]}..."
+        else:
+            return "⏳ PENDING"
+
 
 class SignalManager:
     """
-    Manages trading signals with v3.4.0 support.
+    Manages trading signals aligned with Super TDI + Super BB strategy.
     """
 
     def __init__(self):
@@ -228,7 +279,7 @@ class SignalManager:
         self.BREAK_EVEN_THRESHOLD_MINUTES = 480
         self.BREAK_EVEN_PRICE_THRESHOLD = 0.001
 
-        # Grade thresholds (v3.4.0)
+        # Grade thresholds
         self.GRADE_A_PLUS_THRESHOLD = 90
         self.GRADE_A_THRESHOLD = 82
         self.GRADE_B_PLUS_THRESHOLD = 75
@@ -243,10 +294,12 @@ class SignalManager:
         self.db_enabled = self.db_client is not None and self.db_client.is_available() if self.db_client is not None else False
 
         logger.info(f"✅ SIGNAL_MANAGER v3.4.0: Initialized")
+        logger.info(f"  - Strategy: Super TDI + Super Bollinger Bands")
         logger.info(f"  - Grade A+: {self.GRADE_A_PLUS_THRESHOLD}+")
         logger.info(f"  - Grade A: {self.GRADE_A_THRESHOLD}+")
         logger.info(f"  - Grade B+: {self.GRADE_B_PLUS_THRESHOLD}+")
         logger.info(f"  - Grade B: {self.GRADE_B_THRESHOLD}+")
+        logger.info(f"  - Min Signal Score: {self.MIN_SIGNAL_SCORE}")
 
     def _get_grade(self, score: int) -> str:
         if score >= self.GRADE_A_PLUS_THRESHOLD:
@@ -273,10 +326,19 @@ class SignalManager:
 
     def lock_symbol(self, symbol: str, signal_type: str, entry_price: float,
                     raw_data: Dict, **kwargs) -> bool:
-        """Lock a symbol with a new signal (v3.4.0)."""
+        """Lock a symbol with a new signal (Super TDI + Super BB strategy)."""
         try:
             total_score = raw_data.get('total_score', 0)
             grade = self._get_grade(total_score)
+
+            # Extract strategy-specific fields
+            conditions_met = raw_data.get('conditions_met', 0)
+            conditions_total = raw_data.get('conditions_total', 5)
+
+            # Check if signal passes minimum conditions
+            if conditions_met < 3:
+                logger.warning(f"{EMOJI['REJECT']} Only {conditions_met}/{conditions_total} conditions met for {symbol}")
+                return False
 
             if grade in ["C", "D"]:
                 logger.warning(f"{EMOJI['REJECT']} Grade {grade} signal rejected for {symbol}")
@@ -293,6 +355,7 @@ class SignalManager:
                     logger.error(f"{EMOJI['ERROR']} Missing {field} for {symbol}")
                     return False
 
+            # Create SignalData with all fields
             signal = SignalData(
                 symbol=symbol,
                 signal_type=signal_type,
@@ -301,48 +364,66 @@ class SignalManager:
                 stop_loss=raw_data.get('stop_loss'),
                 take_profit=raw_data.get('take_profit'),
                 confidence=raw_data.get('confidence', 0.5),
-                tdi_level=raw_data.get('tdi_level', 0),
+
+                # Super TDI
+                tdi_level=raw_data.get('tdi_level', 50),
                 tdi_zone=raw_data.get('tdi_zone', 'NEUTRAL'),
+                tdi_zone_description=raw_data.get('tdi_zone_description', ''),
+                tdi_fast=raw_data.get('tdi_fast', 50),
+                tdi_slow=raw_data.get('tdi_slow', 50),
+                tdi_bullish_cross=raw_data.get('tdi_bullish_cross', False),
+                tdi_bearish_cross=raw_data.get('tdi_bearish_cross', False),
+
+                # Super BB
+                bb_position=raw_data.get('bb_position', 0.5),
+                bb_touch_lower=raw_data.get('touch_lower', False),
+                bb_touch_upper=raw_data.get('touch_upper', False),
+                bb_candles_shrinking=raw_data.get('candles_shrinking', False),
+                bb_reversal_confirm=raw_data.get('reversal_confirm', False),
+                bb_squeeze=raw_data.get('bb_squeeze', False),
+
+                # Conditions
+                condition_1_tdi_zone=raw_data.get('condition_1_tdi_zone', False),
+                condition_2_tdi_cross=raw_data.get('condition_2_tdi_cross', False),
+                condition_3_bb_touch=raw_data.get('condition_3_bb_touch', False),
+                condition_4_candles_shrinking=raw_data.get('condition_4_candles_shrinking', False),
+                condition_5_reversal_confirm=raw_data.get('condition_5_reversal_confirm', False),
+                conditions_met=conditions_met,
+                conditions_total=conditions_total,
+
+                # Cheat sheet
+                cheat_sheet=raw_data.get('cheat_sheet', ''),
+
+                # AI
+                ai_decision=raw_data.get('ai_decision', 'PENDING'),
+                ai_confidence=raw_data.get('ai_confidence', 0.0),
+                ai_reasoning=raw_data.get('ai_reasoning', ''),
+                ai_validated=raw_data.get('ai_validated', False),
+                ai_response_time_ms=raw_data.get('ai_response_time_ms', 0.0),
+
+                # Risk
                 rrr=raw_data.get('rrr', 0),
                 signal_strength=raw_data.get('signal_strength', 'SOFT'),
                 risk_multiplier=raw_data.get('risk_multiplier', 1.0),
-                ai_decision=raw_data.get('ai_decision', 'APPROVE'),
-                ai_confidence=raw_data.get('ai_confidence', 0.5),
-                ai_validated=raw_data.get('ai_validated', False),
+
+                # Quality
                 quality_score=raw_data.get('quality_score', 50),
                 total_score=total_score,
                 grade=grade,
-                component_scores=raw_data.get('component_scores', {}),
-                ltf_confirmed=raw_data.get('ltf_confirmed', False),
-                ltf_confidence=raw_data.get('ltf_confidence', 0.0),
-                htf_trend=raw_data.get('htf_trend', 'NEUTRAL'),
-                htf_aligned=raw_data.get('htf_aligned', False),
+
+                # Features
+                divergence_detected=raw_data.get('divergence_detected', False),
+                divergence_type=raw_data.get('divergence_type', ''),
+                candle_pattern=raw_data.get('candle_pattern', 'NONE'),
+                sr_confirmed=raw_data.get('sr_confirmed', False),
+                session=raw_data.get('session', 'UNKNOWN'),
+                session_multiplier=raw_data.get('session_multiplier', 1.0),
+
                 raw_data=raw_data,
                 min_bars_before_check=self.MIN_BARS_BEFORE_CHECK,
                 min_age_seconds_before_check=self.MIN_SIGNAL_AGE_SECONDS,
                 highest_price=entry_price,
                 lowest_price=entry_price,
-                # v3.4.0
-                setup_score=raw_data.get('setup_score', 0),
-                trigger_score=raw_data.get('trigger_score', 0),
-                final_score=raw_data.get('final_score', total_score),
-                entry_grade=grade,
-                state='ACTIVE',
-                regime=raw_data.get('regime', 'NEUTRAL'),
-                structure_direction=raw_data.get('structure_direction', 'NEUTRAL'),
-                entry_distance_atr=raw_data.get('entry_distance_atr', 0.0),
-                ideal_entry=raw_data.get('ideal_entry', entry_price),
-                atr=raw_data.get('atr', 0.0),
-                divergence_detected=raw_data.get('divergence_detected', False),
-                divergence_type=raw_data.get('divergence_type', ''),
-                candle_pattern=raw_data.get('candle_pattern', 'NONE'),
-                candle_pattern_confidence=raw_data.get('candle_pattern_confidence', 0.0),
-                sr_confirmed=raw_data.get('sr_confirmed', False),
-                nearest_support=raw_data.get('nearest_support', 0),
-                nearest_resistance=raw_data.get('nearest_resistance', 0),
-                bb_squeeze=raw_data.get('bb_squeeze', False),
-                session=raw_data.get('session', 'UNKNOWN'),
-                session_multiplier=raw_data.get('session_multiplier', 1.0),
             )
 
             # Save to database
@@ -361,13 +442,16 @@ class SignalManager:
 
             logger.info(
                 f"{EMOJI['LOCK']} SIGNAL_LOCK: {signal_type} {symbol} "
-                f"@ {entry_price:.4f} | Score: {total_score}/100 | Grade: {grade} | "
+                f"@ {entry_price:.4f} | Conditions: {conditions_met}/{conditions_total} | "
+                f"Grade: {grade} | AI: {signal.ai_decision} | "
                 f"Features: {signal.get_feature_summary()}"
             )
             return True
 
         except Exception as e:
             logger.error(f"{EMOJI['ERROR']} Error locking symbol {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def _check_allowed(self, symbol: str, signal_type: str, entry_price: float,
@@ -499,6 +583,7 @@ class SignalManager:
         logger.info(
             f"{EMOJI['UNLOCK']} SIGNAL_UNLOCK: {symbol} {old_status} -> {status_str} | "
             f"PnL: ${signal.pnl:.2f} ({signal.pnl_percent:.2f}%) | "
+            f"Conditions: {signal.conditions_met}/{signal.conditions_total} | "
             f"Bars: {signal.bar_count} | Age: {signal.get_age_minutes():.1f}min"
         )
         return signal
@@ -522,6 +607,16 @@ class SignalManager:
                 "a": sum(1 for s in self.active_signals.values() if s.grade == "A"),
                 "b_plus": sum(1 for s in self.active_signals.values() if s.grade == "B+"),
                 "b": sum(1 for s in self.active_signals.values() if s.grade == "B"),
+            },
+            "conditions_summary": {
+                "avg_conditions_met": sum(s.conditions_met for s in self.active_signals.values()) / max(1, len(self.active_signals)),
+                "max_conditions": max([s.conditions_met for s in self.active_signals.values()]) if self.active_signals else 0,
+            },
+            "ai_summary": {
+                "approved": sum(1 for s in self.active_signals.values() if s.ai_decision == "APPROVE"),
+                "rejected": sum(1 for s in self.active_signals.values() if s.ai_decision == "REJECT"),
+                "waiting": sum(1 for s in self.active_signals.values() if s.ai_decision == "WAIT"),
+                "pending": sum(1 for s in self.active_signals.values() if s.ai_decision == "PENDING"),
             },
             "version": "3.4.0"
         }

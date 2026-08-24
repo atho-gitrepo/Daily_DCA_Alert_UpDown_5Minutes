@@ -1,8 +1,7 @@
 """
-Technical Indicators Library - HYBRID STRATEGY v3.3.0
-NEW: Divergence Detection, Candle Patterns, Support/Resistance, VWAP, BB Squeeze
-OPTIMIZED FOR 15m TIMEFRAME WITH LTF SUPPORT
-Version: 3.3.0 - MAJOR UPDATE: Added predictive indicators
+Technical Indicators Library - SUPER TDI + SUPER BOLLINGER BANDS STRATEGY
+ALIGNED WITH: Super TDI + Super Bollinger Bands + 5-Step Checklist
+Version: 3.4.0 - ALIGNED: Added Super TDI + Super BB strategy methods
 """
 
 import pandas as pd
@@ -38,6 +37,9 @@ EMOJI = {
     "DIVERGENCE": "↩️",
     "PATTERN": "🕯️",
     "S_R": "📊",
+    "SUPER_TDI": "📈",
+    "SUPER_BB": "📊",
+    "CHEAT": "📋",
 }
 
 EPSILON = 1e-10
@@ -68,7 +70,7 @@ def log_indicator_operation(operation: str, status: str, details: Optional[Dict]
         indicator_logger.debug(log_message)
 
 
-# Updated required columns list
+# Updated required columns list for Super TDI + Super BB
 REQUIRED_COLUMNS = [
     'open', 'high', 'low', 'close', 'volume',
     'tdi_slow_ma', 'tdi_fast_ma', 'tdi_zone', 'tdi_strength',
@@ -243,13 +245,653 @@ def calculate_heikin_ashi(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ==================== NEW: SUPER TDI STRATEGY METHODS ====================
+
+def get_tdi_zone(tdi_value: float) -> str:
+    """
+    Get standardized TDI zone for Super TDI strategy.
+
+    Zones:
+    - OVERSOLD: ≤ 25 (HARD BUY - 2x risk)
+    - SOFT_BUY: 25-35 (SOFT BUY - 1x risk)
+    - BUY_ZONE: 35-50 (Getting oversold)
+    - NO_TRADE: 50-65 (Center line - WAIT!)
+    - SOFT_SELL: 65-75 (SOFT SELL - 1x risk)
+    - OVERBOUGHT: ≥ 75 (HARD SELL - 2x risk)
+    """
+    if tdi_value <= 25.0:
+        return "OVERSOLD"
+    elif tdi_value <= 35.0:
+        return "SOFT_BUY"
+    elif tdi_value < 50.0:
+        return "BUY_ZONE"
+    elif tdi_value < 65.0:
+        return "NO_TRADE"
+    elif tdi_value < 75.0:
+        return "SOFT_SELL"
+    else:
+        return "OVERBOUGHT"
+
+
+def get_tdi_zone_description(tdi_value: float) -> str:
+    """Get human-readable TDI zone description."""
+    zone = get_tdi_zone(tdi_value)
+    descriptions = {
+        "OVERSOLD": f"HARD BUY (TDI {tdi_value:.1f} ≤ 25) - 2x risk",
+        "SOFT_BUY": f"SOFT BUY (TDI {tdi_value:.1f} ≤ 35) - 1x risk",
+        "BUY_ZONE": f"BUY ZONE (TDI {tdi_value:.1f} below 50)",
+        "NO_TRADE": f"NO TRADE (TDI {tdi_value:.1f} around 50) - WAIT!",
+        "SOFT_SELL": f"SOFT SELL (TDI {tdi_value:.1f} ≥ 65) - 1x risk",
+        "OVERBOUGHT": f"HARD SELL (TDI {tdi_value:.1f} ≥ 75) - 2x risk",
+    }
+    return descriptions.get(zone, f"UNKNOWN (TDI {tdi_value:.1f})")
+
+
+def detect_tdi_crossovers(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Detect TDI crossover signals for Super TDI strategy.
+
+    Returns:
+        {
+            'bullish_cross': bool,   # Green crossed above Red
+            'bearish_cross': bool,   # Green crossed below Red
+            'green_above_red': bool, # Green currently above Red
+            'green_below_red': bool, # Green currently below Red
+            'tdi_fast': float,
+            'tdi_slow': float,
+        }
+    """
+    if df is None or len(df) < 2:
+        return {
+            'bullish_cross': False,
+            'bearish_cross': False,
+            'green_above_red': False,
+            'green_below_red': False,
+            'tdi_fast': 50.0,
+            'tdi_slow': 50.0,
+        }
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else last
+
+    fast = last.get('tdi_fast_ma', 50.0)
+    slow = last.get('tdi_slow_ma', 50.0)
+    fast_prev = prev.get('tdi_fast_ma', 50.0)
+    slow_prev = prev.get('tdi_slow_ma', 50.0)
+
+    return {
+        'bullish_cross': fast > slow and fast_prev <= slow_prev,
+        'bearish_cross': fast < slow and fast_prev >= slow_prev,
+        'green_above_red': fast > slow,
+        'green_below_red': fast < slow,
+        'tdi_fast': fast,
+        'tdi_slow': slow,
+    }
+
+
+def check_super_tdi_buy_setup(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Check Super TDI BUY setup conditions.
+
+    Returns:
+        {
+            'valid': bool,
+            'tdi_level': float,
+            'tdi_zone': str,
+            'tdi_zone_description': str,
+            'bullish_cross': bool,
+            'green_above_red': bool,
+            'signal_strength': 'HARD' or 'SOFT',
+            'risk_multiplier': float,
+            'reason': str,
+        }
+    """
+    if df is None or df.empty:
+        return {'valid': False, 'reason': 'No data'}
+
+    last = df.iloc[-1]
+    tdi_slow = last.get('tdi_slow_ma', 50.0)
+    tdi_fast = last.get('tdi_fast_ma', 50.0)
+    tdi_zone = get_tdi_zone(tdi_slow)
+
+    crossovers = detect_tdi_crossovers(df)
+    bullish_cross = crossovers.get('bullish_cross', False)
+    green_above_red = crossovers.get('green_above_red', False)
+
+    # BUY zones
+    buy_zones = ['OVERSOLD', 'SOFT_BUY', 'BUY_ZONE']
+
+    if tdi_zone not in buy_zones:
+        return {
+            'valid': False,
+            'tdi_level': tdi_slow,
+            'tdi_zone': tdi_zone,
+            'tdi_zone_description': get_tdi_zone_description(tdi_slow),
+            'bullish_cross': bullish_cross,
+            'green_above_red': green_above_red,
+            'reason': f'TDI {tdi_slow:.1f} not in buy zone ({tdi_zone})'
+        }
+
+    # Need Green above Red (bullish)
+    if not green_above_red and not bullish_cross:
+        return {
+            'valid': False,
+            'tdi_level': tdi_slow,
+            'tdi_zone': tdi_zone,
+            'tdi_zone_description': get_tdi_zone_description(tdi_slow),
+            'bullish_cross': bullish_cross,
+            'green_above_red': green_above_red,
+            'reason': f'Green line not above Red (Fast: {tdi_fast:.1f}, Slow: {tdi_slow:.1f})'
+        }
+
+    # Determine signal strength
+    if tdi_zone == 'OVERSOLD':
+        signal_strength = 'HARD'
+        risk_multiplier = 2.0
+    else:
+        signal_strength = 'SOFT'
+        risk_multiplier = 1.0
+
+    return {
+        'valid': True,
+        'tdi_level': tdi_slow,
+        'tdi_zone': tdi_zone,
+        'tdi_zone_description': get_tdi_zone_description(tdi_slow),
+        'bullish_cross': bullish_cross,
+        'green_above_red': green_above_red,
+        'signal_strength': signal_strength,
+        'risk_multiplier': risk_multiplier,
+        'reason': f'BUY setup: {tdi_zone} ({tdi_slow:.1f})'
+    }
+
+
+def check_super_tdi_sell_setup(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Check Super TDI SELL setup conditions.
+
+    Returns:
+        {
+            'valid': bool,
+            'tdi_level': float,
+            'tdi_zone': str,
+            'tdi_zone_description': str,
+            'bearish_cross': bool,
+            'green_below_red': bool,
+            'signal_strength': 'HARD' or 'SOFT',
+            'risk_multiplier': float,
+            'reason': str,
+        }
+    """
+    if df is None or df.empty:
+        return {'valid': False, 'reason': 'No data'}
+
+    last = df.iloc[-1]
+    tdi_slow = last.get('tdi_slow_ma', 50.0)
+    tdi_fast = last.get('tdi_fast_ma', 50.0)
+    tdi_zone = get_tdi_zone(tdi_slow)
+
+    crossovers = detect_tdi_crossovers(df)
+    bearish_cross = crossovers.get('bearish_cross', False)
+    green_below_red = crossovers.get('green_below_red', False)
+
+    # SELL zones
+    sell_zones = ['SOFT_SELL', 'OVERBOUGHT']
+
+    if tdi_zone not in sell_zones:
+        return {
+            'valid': False,
+            'tdi_level': tdi_slow,
+            'tdi_zone': tdi_zone,
+            'tdi_zone_description': get_tdi_zone_description(tdi_slow),
+            'bearish_cross': bearish_cross,
+            'green_below_red': green_below_red,
+            'reason': f'TDI {tdi_slow:.1f} not in sell zone ({tdi_zone})'
+        }
+
+    # Need Green below Red (bearish)
+    if not green_below_red and not bearish_cross:
+        return {
+            'valid': False,
+            'tdi_level': tdi_slow,
+            'tdi_zone': tdi_zone,
+            'tdi_zone_description': get_tdi_zone_description(tdi_slow),
+            'bearish_cross': bearish_cross,
+            'green_below_red': green_below_red,
+            'reason': f'Green line not below Red (Fast: {tdi_fast:.1f}, Slow: {tdi_slow:.1f})'
+        }
+
+    # Determine signal strength
+    if tdi_zone == 'OVERBOUGHT':
+        signal_strength = 'HARD'
+        risk_multiplier = 2.0
+    else:
+        signal_strength = 'SOFT'
+        risk_multiplier = 1.0
+
+    return {
+        'valid': True,
+        'tdi_level': tdi_slow,
+        'tdi_zone': tdi_zone,
+        'tdi_zone_description': get_tdi_zone_description(tdi_slow),
+        'bearish_cross': bearish_cross,
+        'green_below_red': green_below_red,
+        'signal_strength': signal_strength,
+        'risk_multiplier': risk_multiplier,
+        'reason': f'SELL setup: {tdi_zone} ({tdi_slow:.1f})'
+    }
+
+
+# ==================== NEW: SUPER BOLLINGER BANDS STRATEGY METHODS ====================
+
+def check_super_bb_buy_setup(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Check Super Bollinger Bands BUY setup conditions.
+
+    Returns:
+        {
+            'valid': bool,
+            'touch_lower': bool,
+            'bb_position': float,
+            'inside_band': bool,
+            'candles_shrinking': bool,
+            'ha_color': int,
+            'reversal_buy': bool,
+            'reason': str,
+        }
+    """
+    if df is None or len(df) < 10:
+        return {'valid': False, 'reason': 'No data'}
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else last
+
+    # Get BB values
+    bb_lower = last.get('bb_lower', 0)
+    bb_upper = last.get('bb_upper', 0)
+
+    # Get price values
+    close = last.get('close', 0)
+
+    # Get HA values
+    ha_low = last.get('ha_low', 0)
+    ha_high = last.get('ha_high', 0)
+    ha_close = last.get('ha_close', close)
+    ha_color = last.get('ha_color', 0)
+
+    # Calculate position (0-1)
+    if bb_upper > bb_lower:
+        bb_position = (close - bb_lower) / (bb_upper - bb_lower)
+    else:
+        bb_position = 0.5
+    bb_position = max(0, min(1, bb_position))
+
+    # Touch lower band
+    touch_lower = ha_low <= bb_lower if bb_lower > 0 else False
+
+    # Inside band
+    inside_band = bb_lower < close < bb_upper if bb_lower > 0 and bb_upper > 0 else True
+
+    # Candles shrinking (momentum loss)
+    last_body = abs(last.get('close', 0) - last.get('open', 0))
+    prev_body = abs(prev.get('close', 0) - prev.get('open', 0))
+    candles_shrinking = last_body < prev_body * 0.8 if prev_body > 0 else False
+
+    # HA candle shrinking
+    ha_last_body = abs(last.get('ha_close', 0) - last.get('ha_open', 0))
+    ha_prev_body = abs(prev.get('ha_close', 0) - prev.get('ha_open', 0))
+    ha_shrinking = ha_last_body < ha_prev_body * 0.8 if ha_prev_body > 0 else False
+
+    # Reversal confirmation: touch lower + HA bullish + moving inside
+    reversal_buy = False
+    if touch_lower and ha_color == 1:
+        reversal_buy = True
+    elif touch_lower and close > bb_lower and (ha_shrinking or candles_shrinking):
+        reversal_buy = True
+
+    # Check if setup is valid
+    conditions = []
+    if touch_lower or bb_position < 0.30:
+        conditions.append('Touch lower BB')
+    else:
+        return {'valid': False, 'reason': 'Not touching lower BB', 'touch_lower': touch_lower, 'bb_position': bb_position}
+
+    if ha_color == 1:
+        conditions.append('HA bullish')
+
+    if candles_shrinking or ha_shrinking:
+        conditions.append('Candles shrinking')
+
+    if reversal_buy:
+        conditions.append('Reversal confirmed')
+    else:
+        return {'valid': False, 'reason': 'No reversal confirmed', 'touch_lower': touch_lower, 'bb_position': bb_position}
+
+    return {
+        'valid': True,
+        'touch_lower': touch_lower,
+        'bb_position': bb_position,
+        'inside_band': inside_band,
+        'candles_shrinking': candles_shrinking or ha_shrinking,
+        'ha_color': ha_color,
+        'reversal_buy': reversal_buy,
+        'reason': ' ✅ '.join(conditions)
+    }
+
+
+def check_super_bb_sell_setup(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Check Super Bollinger Bands SELL setup conditions.
+
+    Returns:
+        {
+            'valid': bool,
+            'touch_upper': bool,
+            'bb_position': float,
+            'inside_band': bool,
+            'candles_shrinking': bool,
+            'ha_color': int,
+            'reversal_sell': bool,
+            'reason': str,
+        }
+    """
+    if df is None or len(df) < 10:
+        return {'valid': False, 'reason': 'No data'}
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else last
+
+    # Get BB values
+    bb_lower = last.get('bb_lower', 0)
+    bb_upper = last.get('bb_upper', 0)
+
+    # Get price values
+    close = last.get('close', 0)
+
+    # Get HA values
+    ha_low = last.get('ha_low', 0)
+    ha_high = last.get('ha_high', 0)
+    ha_close = last.get('ha_close', close)
+    ha_color = last.get('ha_color', 0)
+
+    # Calculate position (0-1)
+    if bb_upper > bb_lower:
+        bb_position = (close - bb_lower) / (bb_upper - bb_lower)
+    else:
+        bb_position = 0.5
+    bb_position = max(0, min(1, bb_position))
+
+    # Touch upper band
+    touch_upper = ha_high >= bb_upper if bb_upper > 0 else False
+
+    # Inside band
+    inside_band = bb_lower < close < bb_upper if bb_lower > 0 and bb_upper > 0 else True
+
+    # Candles shrinking (momentum loss)
+    last_body = abs(last.get('close', 0) - last.get('open', 0))
+    prev_body = abs(prev.get('close', 0) - prev.get('open', 0))
+    candles_shrinking = last_body < prev_body * 0.8 if prev_body > 0 else False
+
+    # HA candle shrinking
+    ha_last_body = abs(last.get('ha_close', 0) - last.get('ha_open', 0))
+    ha_prev_body = abs(prev.get('ha_close', 0) - prev.get('ha_open', 0))
+    ha_shrinking = ha_last_body < ha_prev_body * 0.8 if ha_prev_body > 0 else False
+
+    # Reversal confirmation: touch upper + HA bearish + moving inside
+    reversal_sell = False
+    if touch_upper and ha_color == -1:
+        reversal_sell = True
+    elif touch_upper and close < bb_upper and (ha_shrinking or candles_shrinking):
+        reversal_sell = True
+
+    # Check if setup is valid
+    conditions = []
+    if touch_upper or bb_position > 0.70:
+        conditions.append('Touch upper BB')
+    else:
+        return {'valid': False, 'reason': 'Not touching upper BB', 'touch_upper': touch_upper, 'bb_position': bb_position}
+
+    if ha_color == -1:
+        conditions.append('HA bearish')
+
+    if candles_shrinking or ha_shrinking:
+        conditions.append('Candles shrinking')
+
+    if reversal_sell:
+        conditions.append('Reversal confirmed')
+    else:
+        return {'valid': False, 'reason': 'No reversal confirmed', 'touch_upper': touch_upper, 'bb_position': bb_position}
+
+    return {
+        'valid': True,
+        'touch_upper': touch_upper,
+        'bb_position': bb_position,
+        'inside_band': inside_band,
+        'candles_shrinking': candles_shrinking or ha_shrinking,
+        'ha_color': ha_color,
+        'reversal_sell': reversal_sell,
+        'reason': ' ✅ '.join(conditions)
+    }
+
+
+# ==================== NEW: COMPLETE STRATEGY CHECK ====================
+
+def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Complete Super TDI + Super BB BUY strategy check.
+
+    Checks all 5 conditions:
+    1. TDI in buyer zone
+    2. Green above Red (bullish)
+    3. Touch lower Bollinger Band
+    4. Candles shrinking (momentum loss)
+    5. Reversal confirmed
+
+    Returns:
+        {
+            'valid': bool,
+            'conditions': dict of each condition,
+            'conditions_met': int,
+            'conditions_total': 5,
+            'signal_strength': 'HARD' or 'SOFT',
+            'risk_multiplier': float,
+            'reason': str,
+            'cheat_sheet': str,
+        }
+    """
+    if df is None or df.empty:
+        return {'valid': False, 'reason': 'No data', 'conditions_met': 0, 'conditions_total': 5}
+
+    # Get TDI setup
+    tdi_buy = check_super_tdi_buy_setup(df)
+
+    # Get BB setup
+    bb_buy = check_super_bb_buy_setup(df)
+
+    # Check each condition
+    conditions = {
+        'condition_1_tdi_zone': tdi_buy.get('valid', False) and tdi_buy.get('tdi_zone') in ['OVERSOLD', 'SOFT_BUY', 'BUY_ZONE'],
+        'condition_2_tdi_cross': tdi_buy.get('green_above_red', False) or tdi_buy.get('bullish_cross', False),
+        'condition_3_bb_touch': bb_buy.get('touch_lower', False) or bb_buy.get('bb_position', 0.5) < 0.30,
+        'condition_4_candles_shrinking': bb_buy.get('candles_shrinking', False),
+        'condition_5_reversal_confirm': bb_buy.get('reversal_buy', False),
+    }
+
+    conditions_met = sum(1 for v in conditions.values() if v)
+    conditions_total = 5
+
+    # Determine if valid (need at least 4 conditions for strong signal, 3 for soft)
+    valid = conditions_met >= 3
+
+    # Determine signal strength
+    if conditions_met >= 4 and tdi_buy.get('tdi_zone') == 'OVERSOLD':
+        signal_strength = 'HARD'
+        risk_multiplier = 2.0
+    elif conditions_met >= 3:
+        signal_strength = 'SOFT'
+        risk_multiplier = 1.0
+    else:
+        signal_strength = 'WEAK'
+        risk_multiplier = 0.5
+
+    # Build reason
+    reason_parts = []
+    if conditions['condition_1_tdi_zone']:
+        reason_parts.append(f"TDI in {tdi_buy.get('tdi_zone', 'UNKNOWN')} zone ({tdi_buy.get('tdi_level', 50):.1f})")
+    if conditions['condition_2_tdi_cross']:
+        reason_parts.append("Green above Red")
+    if conditions['condition_3_bb_touch']:
+        reason_parts.append("Touch lower BB")
+    if conditions['condition_4_candles_shrinking']:
+        reason_parts.append("Candles shrinking")
+    if conditions['condition_5_reversal_confirm']:
+        reason_parts.append("Reversal confirmed")
+
+    reason = f"{conditions_met}/{conditions_total} conditions met: " + " | ".join(reason_parts)
+
+    # Build cheat sheet
+    cheat_sheet = f"""
+✅ BUY SIGNAL - {df.get('symbol', 'UNKNOWN') if hasattr(df, 'get') else 'UNKNOWN'}
+📋 Cheat Sheet:
+
+1. TDI says: "{tdi_buy.get('tdi_zone_description', 'UNKNOWN')}" ✅
+2. Green line is {'ABOVE' if conditions['condition_2_tdi_cross'] else 'NOT'} Red line ✅
+3. Price {'touched' if conditions['condition_3_bb_touch'] else 'near'} the LOWER Bollinger Band ✅
+4. Candles are {'getting SMALLER' if conditions['condition_4_candles_shrinking'] else 'showing reversal signs'} ✅
+5. Price {'started moving BACK inside' if conditions['condition_5_reversal_confirm'] else 'showing reversal signs'} the band ✅
+
+✅ ALL 5 HAPPEN = ENTER BUY TRADE
+"""
+
+    return {
+        'valid': valid,
+        'conditions': conditions,
+        'conditions_met': conditions_met,
+        'conditions_total': conditions_total,
+        'signal_strength': signal_strength,
+        'risk_multiplier': risk_multiplier,
+        'tdi_level': tdi_buy.get('tdi_level', 50),
+        'tdi_zone': tdi_buy.get('tdi_zone', 'UNKNOWN'),
+        'bb_position': bb_buy.get('bb_position', 0.5),
+        'touch_lower': bb_buy.get('touch_lower', False),
+        'candles_shrinking': bb_buy.get('candles_shrinking', False),
+        'reversal_confirm': bb_buy.get('reversal_buy', False),
+        'reason': reason,
+        'cheat_sheet': cheat_sheet,
+    }
+
+
+def check_super_strategy_sell(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Complete Super TDI + Super BB SELL strategy check.
+
+    Checks all 5 conditions:
+    1. TDI in seller zone
+    2. Green below Red (bearish)
+    3. Touch upper Bollinger Band
+    4. Candles shrinking (momentum loss)
+    5. Reversal confirmed
+
+    Returns:
+        {
+            'valid': bool,
+            'conditions': dict of each condition,
+            'conditions_met': int,
+            'conditions_total': 5,
+            'signal_strength': 'HARD' or 'SOFT',
+            'risk_multiplier': float,
+            'reason': str,
+            'cheat_sheet': str,
+        }
+    """
+    if df is None or df.empty:
+        return {'valid': False, 'reason': 'No data', 'conditions_met': 0, 'conditions_total': 5}
+
+    # Get TDI setup
+    tdi_sell = check_super_tdi_sell_setup(df)
+
+    # Get BB setup
+    bb_sell = check_super_bb_sell_setup(df)
+
+    # Check each condition
+    conditions = {
+        'condition_1_tdi_zone': tdi_sell.get('valid', False) and tdi_sell.get('tdi_zone') in ['SOFT_SELL', 'OVERBOUGHT'],
+        'condition_2_tdi_cross': tdi_sell.get('green_below_red', False) or tdi_sell.get('bearish_cross', False),
+        'condition_3_bb_touch': bb_sell.get('touch_upper', False) or bb_sell.get('bb_position', 0.5) > 0.70,
+        'condition_4_candles_shrinking': bb_sell.get('candles_shrinking', False),
+        'condition_5_reversal_confirm': bb_sell.get('reversal_sell', False),
+    }
+
+    conditions_met = sum(1 for v in conditions.values() if v)
+    conditions_total = 5
+
+    # Determine if valid (need at least 4 conditions for strong signal, 3 for soft)
+    valid = conditions_met >= 3
+
+    # Determine signal strength
+    if conditions_met >= 4 and tdi_sell.get('tdi_zone') == 'OVERBOUGHT':
+        signal_strength = 'HARD'
+        risk_multiplier = 2.0
+    elif conditions_met >= 3:
+        signal_strength = 'SOFT'
+        risk_multiplier = 1.0
+    else:
+        signal_strength = 'WEAK'
+        risk_multiplier = 0.5
+
+    # Build reason
+    reason_parts = []
+    if conditions['condition_1_tdi_zone']:
+        reason_parts.append(f"TDI in {tdi_sell.get('tdi_zone', 'UNKNOWN')} zone ({tdi_sell.get('tdi_level', 50):.1f})")
+    if conditions['condition_2_tdi_cross']:
+        reason_parts.append("Green below Red")
+    if conditions['condition_3_bb_touch']:
+        reason_parts.append("Touch upper BB")
+    if conditions['condition_4_candles_shrinking']:
+        reason_parts.append("Candles shrinking")
+    if conditions['condition_5_reversal_confirm']:
+        reason_parts.append("Reversal confirmed")
+
+    reason = f"{conditions_met}/{conditions_total} conditions met: " + " | ".join(reason_parts)
+
+    # Build cheat sheet
+    cheat_sheet = f"""
+🔴 SELL SIGNAL - {df.get('symbol', 'UNKNOWN') if hasattr(df, 'get') else 'UNKNOWN'}
+📋 Cheat Sheet:
+
+1. TDI says: "{tdi_sell.get('tdi_zone_description', 'UNKNOWN')}" ✅
+2. Green line is {'BELOW' if conditions['condition_2_tdi_cross'] else 'NOT'} Red line ✅
+3. Price {'touched' if conditions['condition_3_bb_touch'] else 'near'} the UPPER Bollinger Band ✅
+4. Candles are {'getting SMALLER' if conditions['condition_4_candles_shrinking'] else 'showing reversal signs'} ✅
+5. Price {'started moving BACK inside' if conditions['condition_5_reversal_confirm'] else 'showing reversal signs'} the band ✅
+
+✅ ALL 5 HAPPEN = ENTER SELL TRADE
+"""
+
+    return {
+        'valid': valid,
+        'conditions': conditions,
+        'conditions_met': conditions_met,
+        'conditions_total': conditions_total,
+        'signal_strength': signal_strength,
+        'risk_multiplier': risk_multiplier,
+        'tdi_level': tdi_sell.get('tdi_level', 50),
+        'tdi_zone': tdi_sell.get('tdi_zone', 'UNKNOWN'),
+        'bb_position': bb_sell.get('bb_position', 0.5),
+        'touch_upper': bb_sell.get('touch_upper', False),
+        'candles_shrinking': bb_sell.get('candles_shrinking', False),
+        'reversal_confirm': bb_sell.get('reversal_sell', False),
+        'reason': reason,
+        'cheat_sheet': cheat_sheet,
+    }
+
+
 # ==================== NEW: DIVERGENCE DETECTION ====================
 
 def detect_divergence(df: pd.DataFrame, lookback: int = 20,
                       price_col: str = 'close',
                       indicator_col: str = 'tdi_slow_ma') -> Dict[str, Any]:
     """
-    ✅ NEW: Detect bullish and bearish divergence between price and TDI.
+    Detect bullish and bearish divergence between price and TDI.
 
     Bullish Divergence: Price makes lower low, TDI makes higher low
     Bearish Divergence: Price makes higher high, TDI makes lower high
@@ -390,7 +1032,7 @@ def detect_divergence(df: pd.DataFrame, lookback: int = 20,
 
 def detect_candle_patterns(df: pd.DataFrame) -> Dict[str, Any]:
     """
-    ✅ NEW: Detect common candlestick patterns.
+    Detect common candlestick patterns.
 
     Returns:
         {
@@ -548,13 +1190,12 @@ def detect_candle_patterns(df: pd.DataFrame) -> Dict[str, Any]:
         }
 
 
-# ==================== NEW: SUPPORT/RESISTANCE ====================
+# ==================== SUPPORT/RESISTANCE ====================
 
 def calculate_support_resistance(df: pd.DataFrame, lookback: int = 100,
                                  num_levels: int = 3) -> Dict[str, Any]:
     """
     Calculate key support and resistance levels using pivot points.
-    Enhanced with fallback values when no clear pivots are found.
     """
     if df is None or df.empty:
         return {
@@ -588,7 +1229,7 @@ def calculate_support_resistance(df: pd.DataFrame, lookback: int = 100,
                 lows[i] < lows[i+1] and lows[i] < lows[i+2]):
                 pivot_lows.append(lows[i])
 
-        # ✅ FIX: If no pivots found, use MIN/MAX
+        # If no pivots found, use MIN/MAX
         if not pivot_lows and not pivot_highs:
             support_levels = [recent_df['low'].min()]
             resistance_levels = [recent_df['high'].max()]
@@ -649,7 +1290,7 @@ def calculate_support_resistance(df: pd.DataFrame, lookback: int = 100,
                 nearest_resistance = level
                 break
 
-        # ✅ FIX: If still no levels, use MIN/MAX
+        # If still no levels, use MIN/MAX
         if nearest_support == 0:
             nearest_support = recent_df['low'].min()
         if nearest_resistance == 0:
@@ -675,7 +1316,6 @@ def calculate_support_resistance(df: pd.DataFrame, lookback: int = 100,
 
     except Exception as e:
         indicator_logger.error(f"{EMOJI['ERROR']} INDICATOR_SR: {e}")
-        # ✅ FIX: Return MIN/MAX on error
         if not df.empty:
             last_price = df['close'].iloc[-1]
             min_price = df['low'].min()
@@ -702,11 +1342,11 @@ def calculate_support_resistance(df: pd.DataFrame, lookback: int = 100,
         }
 
 
-# ==================== NEW: BB SQUEEZE DETECTION ====================
+# ==================== BB SQUEEZE DETECTION ====================
 
 def detect_bb_squeeze(df: pd.DataFrame, period: int = 20) -> Dict[str, Any]:
     """
-    ✅ NEW: Detect Bollinger Band squeeze (low volatility = upcoming breakout).
+    Detect Bollinger Band squeeze (low volatility = upcoming breakout).
 
     Returns:
         {
@@ -807,11 +1447,11 @@ def detect_bb_squeeze(df: pd.DataFrame, period: int = 20) -> Dict[str, Any]:
         }
 
 
-# ==================== NEW: VWAP ====================
+# ==================== VWAP ====================
 
 def calculate_vwap(df: pd.DataFrame) -> pd.DataFrame:
     """
-    ✅ NEW: Calculate Volume Weighted Average Price.
+    Calculate Volume Weighted Average Price.
     """
     if df is None or df.empty:
         return df
@@ -847,9 +1487,7 @@ def calculate_vwap(df: pd.DataFrame) -> pd.DataFrame:
 # ==================== SESSION UTILITIES ====================
 
 def get_trading_session(dt: datetime = None) -> str:
-    """
-    ✅ NEW: Get current trading session based on UTC time.
-    """
+    """Get current trading session based on UTC time."""
     if dt is None:
         dt = datetime.utcnow()
 
@@ -866,9 +1504,7 @@ def get_trading_session(dt: datetime = None) -> str:
 
 
 def get_session_multiplier(session: str) -> float:
-    """
-    ✅ NEW: Get confidence/position multiplier based on session.
-    """
+    """Get confidence/position multiplier based on session."""
     multipliers = {
         "ASIAN": 0.7,      # Lower confidence in Asian session
         "LONDON": 1.0,     # Normal
@@ -1291,7 +1927,7 @@ class Indicators:
                 indicator_logger.warning(f"{EMOJI['WARNING']} INDICATOR_ALL: Volume calculation failed: {e}")
                 df = _add_default_volume_columns(df)
 
-            # ===== NEW: Calculate Divergence =====
+            # ===== Calculate Divergence =====
             try:
                 divergence = detect_divergence(df)
                 df['divergence_bullish'] = divergence.get('bullish', False)
@@ -1307,7 +1943,7 @@ class Indicators:
                 df['divergence_bullish_strength'] = 0.0
                 df['divergence_bearish_strength'] = 0.0
 
-            # ===== NEW: Calculate Candle Patterns =====
+            # ===== Calculate Candle Patterns =====
             try:
                 patterns = detect_candle_patterns(df)
                 df['candle_pattern'] = patterns.get('pattern_name', 'NONE')
@@ -1325,7 +1961,7 @@ class Indicators:
                 df['candle_engulfing_bullish'] = False
                 df['candle_engulfing_bearish'] = False
 
-            # ===== NEW: Calculate Support/Resistance =====
+            # ===== Calculate Support/Resistance =====
             try:
                 sr = calculate_support_resistance(df)
                 df['nearest_support'] = sr.get('nearest_support', 0)
@@ -1341,7 +1977,7 @@ class Indicators:
                 df['distance_to_support_pct'] = 0
                 df['distance_to_resistance_pct'] = 0
 
-            # ===== NEW: Calculate BB Squeeze =====
+            # ===== Calculate BB Squeeze =====
             try:
                 squeeze = detect_bb_squeeze(df)
                 df['bb_squeeze'] = squeeze.get('squeeze', False)
@@ -1353,7 +1989,7 @@ class Indicators:
                 df['bb_squeeze_strength'] = 0.0
                 df['bb_squeeze_direction'] = 'NEUTRAL'
 
-            # ===== NEW: Calculate VWAP =====
+            # ===== Calculate VWAP =====
             try:
                 df = calculate_vwap(df)
             except Exception as e:
@@ -1586,6 +2222,17 @@ __all__ = [
     "_add_default_bb_columns",
     "_add_default_volume_columns",
     "_add_default_momentum_columns",
+    # Super TDI + Super BB Strategy Methods
+    "get_tdi_zone",
+    "get_tdi_zone_description",
+    "detect_tdi_crossovers",
+    "check_super_tdi_buy_setup",
+    "check_super_tdi_sell_setup",
+    "check_super_bb_buy_setup",
+    "check_super_bb_sell_setup",
+    "check_super_strategy_buy",
+    "check_super_strategy_sell",
+    # Existing methods
     "detect_divergence",
     "detect_candle_patterns",
     "calculate_support_resistance",

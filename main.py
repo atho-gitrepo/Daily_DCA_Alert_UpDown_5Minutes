@@ -1,0 +1,564 @@
+#!/usr/bin/env python3
+"""
+AI Trading Bot v3.4.0 - Main Entry Point
+SUPER TDI + SUPER BOLLINGER BANDS STRATEGY
+"""
+
+import os
+import sys
+import time
+import logging
+import json
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timedelta
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+import signal
+
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# ========== IMPORTS ==========
+
+# Settings
+from settings import config
+
+# Data Fetcher
+from utils.binance_data_client import binance_client
+
+# MongoDB
+from utils.mongodb_client import mongodb_client
+
+# Indicators
+from utils.indicators import Indicators, calculate_all_indicators
+
+# Signal Manager
+from utils.signal_manager import signal_manager
+
+# Telegram
+from utils.telegram_bot import telegram_bot
+
+# Strategy - Super TDI + Super Bollinger Bands
+from strategy.signal_engine import SignalEngine
+from strategy.ai_analyzer import ai_analyzer
+from strategy.cheat_sheet import SignalCheatSheet
+from utils.logger import get_logger
+
+# ========== LOGGING ==========
+
+# Create logs directory
+os.makedirs('logs', exist_ok=True)
+
+logger = get_logger(__name__)
+
+# Emoji indicators
+EMOJI = {
+    "START": "🚀", "STOP": "🛑", "SUCCESS": "✅", "ERROR": "❌",
+    "WARNING": "⚠️", "INFO": "ℹ️", "SIGNAL": "📡", "HEALTH": "💚",
+    "AI": "🤖", "DB": "💾", "TELEGRAM": "📨", "SYNC": "🔄",
+    "PROFIT": "💰", "LOSS": "💸", "REJECT": "🚫", "WAIT": "⏳",
+    "LOCK": "🔒", "UNLOCK": "🔓", "MONITOR": "📊", "RESULT": "📈",
+    "LTF": "⏱️", "HTF": "📊", "SCORE": "🎯", "GRADE_A": "🏆",
+    "GRADE_B": "🥈", "GRADE_C": "🥉", "DIVERGENCE": "↩️",
+    "PATTERN": "🕯️", "S_R": "📊", "SESSION": "🌍", "STRUCTURE": "🏗️",
+    "REGIME": "📈", "STATE": "🔄", "FETCH": "📊", "TDI": "📈",
+    "BB": "📊", "CANDLE": "🕯️", "CHEAT": "📋",
+}
+
+# ========== GLOBAL STATE ==========
+
+running = True
+bot_stats = {
+    'status': 'initializing',
+    'start_time': datetime.now().isoformat(),
+    'signals_generated': 0,
+    'ai_approved': 0,
+    'ai_rejected': 0,
+    'ai_waited': 0,
+    'active_signals': 0,
+    'errors': 0,
+    'version': '3.4.0',
+    'strategy': 'Super TDI + Super Bollinger Bands',
+    'ai_enabled': ai_analyzer.enabled if ai_analyzer else False,
+    'mongodb_enabled': mongodb_client.is_available() if mongodb_client else False,
+    'features': {
+        'tdi_zones': True,
+        'bb_touch': True,
+        'candle_shrinking': True,
+        'reversal_confirmation': True,
+        'divergence': config.strategy.enable_divergence,
+        'candle_patterns': config.strategy.enable_candle_patterns,
+        'support_resistance': config.strategy.enable_support_resistance,
+        'bb_squeeze': config.strategy.enable_bb_squeeze,
+        'session_filtering': config.strategy.enable_session_filtering,
+        'ai_validation': ai_analyzer.enabled if ai_analyzer else False,
+    },
+}
+
+
+# ========== DATA FETCHER WRAPPER ==========
+
+class DataFetcherWrapper:
+    """Wrapper for binance_data_client."""
+
+    def __init__(self):
+        self._client = binance_client
+        if self._client is not None:
+            logger.info(f"{EMOJI['SUCCESS']} Data fetcher: Binance client loaded")
+        else:
+            logger.warning(f"{EMOJI['WARNING']} Data fetcher not available")
+
+    def fetch_klines(self, symbol: str, interval: str = '5m', limit: int = 200):
+        """Fetch klines data."""
+        if self._client is not None:
+            try:
+                df = self._client.get_historical_klines(
+                    symbol=symbol,
+                    interval=interval,
+                    limit=limit,
+                    heikin_ashi=True
+                )
+                if df is not None and not df.empty:
+                    return df
+            except Exception as e:
+                logger.debug(f"Data fetch error: {e}")
+        return None
+
+    def fetch_current_price(self, symbol: str) -> Optional[float]:
+        """Fetch current price."""
+        if self._client is not None:
+            try:
+                return self._client.get_current_price(symbol)
+            except Exception as e:
+                logger.debug(f"Price fetch error: {e}")
+        return None
+
+    def cleanup(self):
+        """Clean up resources."""
+        if self._client is not None:
+            try:
+                self._client.cleanup()
+            except Exception as e:
+                logger.debug(f"Cleanup error: {e}")
+
+
+# Create singleton
+data_client = DataFetcherWrapper()
+
+
+# ========== MAIN PROCESSING FUNCTIONS ==========
+
+def fetch_data(symbol: str, timeframe: str = '5m') -> Optional[pd.DataFrame]:
+    """Fetch historical data with indicators."""
+    try:
+        df = data_client.fetch_klines(symbol, timeframe, 200)
+        if df is None or df.empty:
+            return None
+
+        # Calculate all indicators
+        df = calculate_all_indicators(df)
+        return df
+
+    except Exception as e:
+        logger.error(f"Data fetch error for {symbol}: {e}")
+        return None
+
+
+def check_conditions(signal_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Check signal conditions and return detailed status."""
+    if not signal_data:
+        return {'valid': False, 'conditions_met': 0, 'conditions_total': 5}
+
+    conditions = {
+        'condition_1_tdi_zone': signal_data.get('condition_1_tdi_zone', False),
+        'condition_2_tdi_cross': signal_data.get('condition_2_tdi_cross', False),
+        'condition_3_bb_touch': signal_data.get('condition_3_bb_touch', False),
+        'condition_4_candles_shrinking': signal_data.get('condition_4_candles_shrinking', False),
+        'condition_5_reversal_confirm': signal_data.get('condition_5_reversal_confirm', False),
+    }
+
+    conditions_met = sum(1 for v in conditions.values() if v)
+    conditions_total = 5
+
+    is_valid = conditions_met >= config.strategy.min_conditions_for_signal
+
+    return {
+        'valid': is_valid,
+        'conditions': conditions,
+        'conditions_met': conditions_met,
+        'conditions_total': conditions_total,
+    }
+
+
+def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
+    """Process a single symbol using Super TDI + Super BB strategy."""
+
+    if signal_manager is None:
+        logger.warning(f"{EMOJI['WARNING']} Signal manager not available for {symbol}")
+        return None
+
+    try:
+        # Check if symbol is locked
+        if signal_manager.is_symbol_locked(symbol):
+            return None
+
+        # Fetch data
+        df = fetch_data(symbol, config.market.timeframe)
+        if df is None:
+            return None
+
+        # Create signal engine
+        signal_engine = SignalEngine(use_ai=ai_analyzer.enabled if ai_analyzer else False)
+
+        # Process signal
+        signal = signal_engine.process(df, symbol)
+
+        if signal is None or signal.get('signal') == 'NO_TRADE':
+            return None
+
+        # Get current price
+        current_price = data_client.fetch_current_price(symbol)
+        if current_price:
+            signal['entry_price'] = current_price
+        elif not df.empty:
+            signal['entry_price'] = df['close'].iloc[-1]
+
+        # Check conditions
+        condition_check = check_conditions(signal)
+
+        # Add condition data to signal
+        signal['conditions_met'] = condition_check['conditions_met']
+        signal['conditions_total'] = condition_check['conditions_total']
+        signal['condition_1_tdi_zone'] = condition_check['conditions'].get('condition_1_tdi_zone', False)
+        signal['condition_2_tdi_cross'] = condition_check['conditions'].get('condition_2_tdi_cross', False)
+        signal['condition_3_bb_touch'] = condition_check['conditions'].get('condition_3_bb_touch', False)
+        signal['condition_4_candles_shrinking'] = condition_check['conditions'].get('condition_4_candles_shrinking', False)
+        signal['condition_5_reversal_confirm'] = condition_check['conditions'].get('condition_5_reversal_confirm', False)
+
+        # Check AI decision
+        ai_decision = signal.get('ai_decision', 'NONE')
+
+        # Build cheat sheet
+        cheat_sheet_obj = SignalCheatSheet()
+        if signal.get('direction') == 'BUY':
+            signal['cheat_sheet'] = cheat_sheet_obj.generate_buy_cheat_sheet(signal)
+        elif signal.get('direction') == 'SELL':
+            signal['cheat_sheet'] = cheat_sheet_obj.generate_sell_cheat_sheet(signal)
+        else:
+            signal['cheat_sheet'] = cheat_sheet_obj.generate_wait_cheat_sheet(signal)
+
+        # Lock symbol if conditions met AND AI approved (or AI not enabled)
+        if condition_check['valid']:
+            if ai_decision == 'APPROVE' or not ai_analyzer.enabled:
+                if signal_manager.lock_symbol(
+                    symbol=symbol,
+                    signal_type=signal.get('direction', 'UNKNOWN'),
+                    entry_price=signal.get('entry_price', df['close'].iloc[-1] if not df.empty else 0),
+                    raw_data=signal,
+                ):
+                    bot_stats['signals_generated'] += 1
+                    bot_stats['ai_approved'] += 1 if ai_decision == 'APPROVE' else 0
+
+                    # Send Telegram notification with cheat sheet
+                    if telegram_bot is not None and telegram_bot.enabled:
+                        try:
+                            telegram_bot.send_signal(
+                                symbol=symbol,
+                                signal_type=signal.get('direction', 'UNKNOWN'),
+                                entry_price=signal.get('entry_price', 0),
+                                stop_loss=signal.get('stop_loss', 0),
+                                take_profit=signal.get('take_profit', 0),
+                                confidence=signal.get('confidence', 0.7),
+                                ai_decision=ai_decision,
+                                ai_confidence=signal.get('ai_confidence', 0.8),
+                                ai_reasoning=signal.get('ai_reasoning', ''),
+                                rrr=signal.get('rrr', 2.0),
+                                total_score=signal.get('total_score', 75),
+                                grade=signal.get('grade', 'B'),
+                                signal_strength=signal.get('signal_strength', 'SOFT'),
+                                risk_multiplier=signal.get('risk_multiplier', 1.0),
+                                tdi_level=signal.get('tdi_level', 50),
+                                tdi_zone=signal.get('tdi_zone', 'NEUTRAL'),
+                                # Conditions
+                                conditions_met=condition_check['conditions_met'],
+                                conditions_total=condition_check['conditions_total'],
+                                condition_1_tdi_zone=condition_check['conditions'].get('condition_1_tdi_zone', False),
+                                condition_2_tdi_cross=condition_check['conditions'].get('condition_2_tdi_cross', False),
+                                condition_3_bb_touch=condition_check['conditions'].get('condition_3_bb_touch', False),
+                                condition_4_candles_shrinking=condition_check['conditions'].get('condition_4_candles_shrinking', False),
+                                condition_5_reversal_confirm=condition_check['conditions'].get('condition_5_reversal_confirm', False),
+                                # Features
+                                divergence_detected=signal.get('divergence_detected', False),
+                                candle_pattern=signal.get('candle_pattern', 'NONE'),
+                                sr_confirmed=signal.get('sr_confirmed', False),
+                                bb_squeeze=signal.get('bb_squeeze', False),
+                                session=signal.get('session', 'UNKNOWN'),
+                                # Cheat sheet
+                                cheat_sheet=signal.get('cheat_sheet', ''),
+                            )
+                        except Exception as e:
+                            logger.warning(f"Telegram error for {symbol}: {e}")
+
+                    # Print cheat sheet to console
+                    cheat_sheet = signal.get('cheat_sheet', '')
+                    if cheat_sheet:
+                        print("\n" + "=" * 70)
+                        print(cheat_sheet)
+                        if ai_decision == 'APPROVE':
+                            print(f"\n🤖 AI Decision: {ai_decision} (Confidence: {signal.get('ai_confidence', 0.8)*100:.0f}%)")
+                        print("=" * 70 + "\n")
+
+                    logger.info(f"{EMOJI['SIGNAL']} {signal.get('direction')} {symbol} @ {signal.get('entry_price', 0):.4f} | Conditions: {condition_check['conditions_met']}/{condition_check['conditions_total']} | AI: {ai_decision}")
+                    return signal
+
+            elif ai_decision == 'REJECT':
+                bot_stats['ai_rejected'] += 1
+                logger.info(f"{EMOJI['REJECT']} AI REJECTED: {symbol} - {signal.get('ai_reasoning', 'No reason')}")
+
+            elif ai_decision == 'WAIT':
+                bot_stats['ai_waited'] += 1
+                logger.info(f"{EMOJI['WAIT']} AI WAIT: {symbol} - {signal.get('ai_reasoning', 'No reason')}")
+        else:
+            logger.debug(f"{EMOJI['REJECT']} {symbol}: Only {condition_check['conditions_met']}/{condition_check['conditions_total']} conditions met")
+
+        return None
+
+    except Exception as e:
+        logger.error(f"Process error for {symbol}: {e}")
+        bot_stats['errors'] += 1
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def check_active_signals():
+    """Check and update active signals."""
+    if signal_manager is None:
+        return
+
+    active = signal_manager.get_all_active_signals()
+    bot_stats['active_signals'] = len(active)
+
+    # Monitor each active signal
+    for symbol, signal in active.items():
+        try:
+            current_price = data_client.fetch_current_price(symbol)
+            if current_price is None:
+                continue
+
+            # Check signal
+            status, diff, updated = signal_manager.check_active_signal(
+                symbol, current_price, {}
+            )
+
+            if status != "ACTIVE" and updated:
+                logger.info(f"{EMOJI['RESULT']} {symbol}: {status} | PnL: ${updated.pnl:.2f} ({updated.pnl_percent:.2f}%)")
+
+                # Send Telegram result
+                if telegram_bot is not None and telegram_bot.enabled:
+                    try:
+                        telegram_bot.send_result(
+                            symbol=symbol,
+                            signal_type=signal.get('signal_type', 'UNKNOWN'),
+                            entry_price=signal.get('entry_price', 0),
+                            exit_price=current_price,
+                            pnl=updated.pnl,
+                            pnl_percent=updated.pnl_percent,
+                            status=status,
+                            bars_held=updated.bar_count,
+                            fees=updated.fees,
+                            confidence=updated.confidence,
+                            tdi_level=updated.tdi_level,
+                            rrr=updated.rrr,
+                            signal_strength=updated.signal_strength,
+                            risk_multiplier=updated.risk_multiplier,
+                            total_score=updated.total_score,
+                            grade=updated.grade,
+                            conditions_met=getattr(updated, 'conditions_met', 0),
+                            conditions_total=getattr(updated, 'conditions_total', 5),
+                            divergence_detected=getattr(updated, 'divergence_detected', False),
+                            candle_pattern=getattr(updated, 'candle_pattern', 'NONE'),
+                            sr_confirmed=getattr(updated, 'sr_confirmed', False),
+                            session=getattr(updated, 'session', 'UNKNOWN'),
+                            entry_time=updated.entry_time,
+                            exit_time=updated.exit_time,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Telegram result error for {symbol}: {e}")
+
+        except Exception as e:
+            logger.error(f"Active signal check error for {symbol}: {e}")
+
+
+# ========== HEALTH SERVER ==========
+
+def run_health_server():
+    """Run health check server."""
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/health':
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                status_data = {
+                    'status': 'running' if running else 'stopped',
+                    'version': '3.4.0',
+                    'strategy': 'Super TDI + Super Bollinger Bands',
+                    'timestamp': datetime.now().isoformat(),
+                    'stats': bot_stats,
+                    'active_signals': len(signal_manager.active_signals) if signal_manager else 0,
+                    'ai_enabled': ai_analyzer.enabled if ai_analyzer else False,
+                    'mongodb_enabled': mongodb_client.is_available() if mongodb_client else False,
+                    'features': bot_stats['features']
+                }
+                self.wfile.write(json.dumps(status_data, indent=2).encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    try:
+        port = getattr(config.deployment, 'port', 8080) if hasattr(config, 'deployment') else 8080
+        server = HTTPServer(('0.0.0.0', port), HealthHandler)
+        logger.info(f"{EMOJI['HEALTH']} Health server running on port {port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"Health server error: {e}")
+
+
+def signal_handler(sig, frame):
+    """Handle shutdown signals."""
+    global running
+    logger.info(f"{EMOJI['STOP']} Shutting down...")
+    running = False
+
+
+# ========== MAIN ==========
+
+def main():
+    """Main entry point."""
+    global running
+
+    logger.info("=" * 70)
+    logger.info(f"{EMOJI['START']} AI TRADING BOT v3.4.0")
+    logger.info("📊 SUPER TDI + SUPER BOLLINGER BANDS STRATEGY")
+    logger.info("=" * 70)
+    logger.info("📋 Strategy Features:")
+    logger.info("  - Super TDI Zones (25/35/50/65/75)")
+    logger.info("  - Super Bollinger Bands (34 period, 1.75 dev)")
+    logger.info("  - 5-Step Entry Checklist")
+    logger.info("  - Cheat Sheet Explanations")
+    logger.info("  - Divergence Detection")
+    logger.info("  - Candle Pattern Recognition")
+    logger.info("  - Support/Resistance Levels")
+    logger.info("  - BB Squeeze Detection")
+    logger.info("  - Session Filtering")
+    logger.info(f"  - AI Validation: {'✅' if ai_analyzer.enabled else '❌'}")
+    logger.info(f"  - MongoDB: {'✅' if mongodb_client.is_available() else '❌'}")
+    logger.info("=" * 70)
+    logger.info(f"📈 Symbols: {config.market.symbols}")
+    logger.info(f"⏱️ Timeframe: {config.market.timeframe}")
+    logger.info(f"📋 HTF: {config.market.htf_timeframe}")
+    logger.info(f"🎯 Run Mode: {config.run_mode}")
+    logger.info(f"📊 Min Conditions: {config.strategy.min_conditions_for_signal}/5")
+    logger.info("=" * 70)
+
+    # Setup signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Start health server
+    threading.Thread(target=run_health_server, daemon=True).start()
+
+    # Symbols to monitor
+    symbols = config.market.symbols
+    logger.info(f"{EMOJI['MONITOR']} Monitoring {len(symbols)} symbols: {', '.join(symbols[:5])}...")
+
+    # Send startup message
+    if telegram_bot.enabled:
+        ai_status = "✅" if ai_analyzer.enabled else "❌"
+        db_status = "✅" if mongodb_client.is_available() else "❌"
+        telegram_bot.send_startup_message(
+            symbols=symbols,
+            config_info={
+                'environment': config.deployment.environment.value,
+                'timeframe': config.market.timeframe,
+                'ltf_timeframe': config.market.ltf_timeframe,
+                'htf_timeframe': config.market.htf_timeframe,
+                'ai_enabled': ai_analyzer.enabled,
+                'min_conditions': config.strategy.min_conditions_for_signal,
+                'rrr_range': f"{config.strategy.min_rrr}-{config.strategy.max_rrr}",
+                'bb_period': config.strategy.bb_period,
+                'bb_deviation': config.strategy.bb_deviation,
+            }
+        )
+
+    # Main loop
+    cycle = 0
+    while running:
+        try:
+            cycle += 1
+            start_time = time.time()
+
+            # Process each symbol
+            for symbol in symbols:
+                if not running:
+                    break
+                try:
+                    process_symbol(symbol)
+                except Exception as e:
+                    logger.error(f"Symbol {symbol} error: {e}")
+
+            # Check active signals
+            check_active_signals()
+
+            # Log status every 10 cycles
+            if cycle % 10 == 0:
+                logger.info(
+                    f"{EMOJI['MONITOR']} Cycle {cycle}: "
+                    f"{bot_stats['signals_generated']} signals, "
+                    f"{bot_stats['ai_approved']} approved, "
+                    f"{bot_stats['ai_rejected']} rejected, "
+                    f"{bot_stats['active_signals']} active, "
+                    f"{bot_stats['errors']} errors"
+                )
+
+            # Sleep
+            elapsed = time.time() - start_time
+            polling_interval = config.market.polling_interval_seconds
+            sleep_time = max(0, polling_interval - elapsed)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            logger.error(f"Main loop error: {e}")
+            import traceback
+            traceback.print_exc()
+            time.sleep(5)
+
+    # Cleanup
+    logger.info(f"{EMOJI['STOP']} Shutting down...")
+    try:
+        if mongodb_client is not None:
+            mongodb_client.cleanup()
+        data_client.cleanup()
+    except Exception as e:
+        logger.warning(f"Cleanup error: {e}")
+
+    # Send shutdown message
+    if telegram_bot.enabled:
+        telegram_bot.send_shutdown_message({
+            'signals_generated': bot_stats['signals_generated'],
+            'ai_approved': bot_stats['ai_approved'],
+            'ai_rejected': bot_stats['ai_rejected'],
+            'total_pnl': 0,  # Tracked elsewhere
+            'avg_rrr': 0,    # Tracked elsewhere
+        })
+
+    logger.info(f"{EMOJI['RESULT']} Final stats: {bot_stats['signals_generated']} signals generated")
+    logger.info(f"{EMOJI['SUCCESS']} Bot stopped")
+
+
+if __name__ == "__main__":
+    main()

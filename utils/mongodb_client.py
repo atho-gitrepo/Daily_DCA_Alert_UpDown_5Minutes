@@ -1,7 +1,7 @@
 """
-MongoDB Client for Trading Bot - HYBRID STRATEGY.
-FIXED v3.3.1: Complete deletion from active collection when moving to resolved.
-Version: 3.3.1 - FIXED: Active signal deletion on resolution
+MongoDB Client for Trading Bot - SUPER TDI + SUPER BOLLINGER BANDS STRATEGY.
+ALIGNED: Super TDI + Super BB strategy with condition tracking.
+Version: 3.4.0 - ALIGNED: Super TDI + Super BB strategy support
 """
 
 import os
@@ -45,20 +45,23 @@ EMOJI = {
     "RAILWAY": "🚂",
     "ACTIVE": "🔴",
     "RESOLVED": "✅",
+    "TDI": "📈",
+    "BB": "📊",
+    "CONDITION": "✅",
 }
 
 
 class MongoDBClient:
     """
-    MongoDB Atlas Client for Railway Deployment
-    FIXED v3.3.1: Complete deletion from active collection
+    MongoDB Client for Super TDI + Super Bollinger Bands strategy.
+    Supports condition tracking and cheat sheet storage.
     """
 
     def __init__(self):
         self.client = None
         self.db = None
         self.initialized = False
-        self.version = "3.3.1"
+        self.version = "3.4.0"
         self._connected = False
         self._last_error = None
         self._connection_attempts = 0
@@ -77,6 +80,7 @@ class MongoDBClient:
             "resolved_saves": 0,
             "archive_saves": 0,
             "errors": 0,
+            "signals_saved": 0,
         }
 
         self._initialize()
@@ -106,7 +110,7 @@ class MongoDBClient:
             self.initialized = True
             self._connected = True
 
-            mongo_logger.info(f"{EMOJI['SUCCESS']} MONGODB_INIT: Connected to MongoDB on Railway")
+            mongo_logger.info(f"{EMOJI['SUCCESS']} MONGODB_INIT: Connected to MongoDB")
             mongo_logger.info(f"{EMOJI['DB']} Database: {self.db_name}")
             mongo_logger.info(f"{EMOJI['SUCCESS']} MONGODB_INIT v{self.version}: Client initialized")
             mongo_logger.info(f"{EMOJI['DELETE']} Active signals will be COMPLETELY DELETED when resolved")
@@ -301,21 +305,31 @@ class MongoDBClient:
             if self.db is None:
                 return
 
+            # Active signals indexes
             active_collection = self.db[self.ACTIVE_COLLECTION]
             active_collection.create_index([("symbol", ASCENDING)])
             active_collection.create_index([("status", ASCENDING)])
             active_collection.create_index([("entry_time", DESCENDING)])
             active_collection.create_index([("symbol", ASCENDING), ("status", ASCENDING)])
 
+            # New: Index for conditions tracking
+            active_collection.create_index([("conditions_met", ASCENDING)])
+            active_collection.create_index([("signal_strength", ASCENDING)])
+
+            # Resolved signals indexes
             resolved_collection = self.db[self.RESOLVED_COLLECTION]
             resolved_collection.create_index([("symbol", ASCENDING)])
             resolved_collection.create_index([("status", ASCENDING)])
             resolved_collection.create_index([("exit_time", DESCENDING)])
             resolved_collection.create_index([("symbol", ASCENDING), ("status", ASCENDING)])
 
+            # Signals archive indexes
             signals_collection = self.db[self.SIGNALS_COLLECTION]
             signals_collection.create_index([("symbol", ASCENDING), ("signal_type", ASCENDING)])
             signals_collection.create_index([("timestamp", DESCENDING)])
+
+            # New: Index for strategy version
+            signals_collection.create_index([("strategy_version", ASCENDING)])
 
             mongo_logger.info(f"{EMOJI['INDEX']} MONGODB: Indexes created")
 
@@ -366,14 +380,31 @@ class MongoDBClient:
     # ==================== SIGNAL OPERATIONS ====================
 
     def save_signal(self, signal_data: Dict[str, Any]) -> Optional[str]:
-        """Save signal to ACTIVE collection and archive."""
+        """
+        Save signal to ACTIVE collection and archive.
+        Supports Super TDI + Super BB strategy fields.
+        """
         if not self.is_available():
             mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_SAVE: Not available")
             return None
 
         try:
+            # Add timestamps
             signal_data['created_at'] = datetime.now().isoformat()
             signal_data['updated_at'] = datetime.now().isoformat()
+            signal_data['strategy_version'] = "3.4.0"
+            signal_data['strategy_name'] = "Super TDI + Super Bollinger Bands"
+
+            # Ensure condition fields are present
+            condition_fields = [
+                'conditions_met', 'conditions_total',
+                'condition_1_tdi_zone', 'condition_2_tdi_cross',
+                'condition_3_bb_touch', 'condition_4_candles_shrinking',
+                'condition_5_reversal_confirm'
+            ]
+            for field in condition_fields:
+                if field not in signal_data:
+                    signal_data[field] = 0 if field == 'conditions_met' else False
 
             if '_id' not in signal_data:
                 signal_data['_id'] = self._generate_id(signal_data)
@@ -389,7 +420,9 @@ class MongoDBClient:
             )
 
             if result.acknowledged:
+                self.metrics["signals_saved"] += 1
                 mongo_logger.info(f"{EMOJI['ACTIVE']} MONGODB_SAVE: Saved signal to {self.ACTIVE_COLLECTION}: {doc_id}")
+                mongo_logger.debug(f"  Conditions: {signal_data.get('conditions_met', 0)}/{signal_data.get('conditions_total', 5)}")
             else:
                 mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_SAVE: Failed to save to {self.ACTIVE_COLLECTION}")
                 return None
@@ -472,6 +505,33 @@ class MongoDBClient:
             mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_GET_ACTIVE: Failed - {e}")
             return {}
 
+    def get_active_signals_by_conditions(self, min_conditions: int = 3) -> List[Dict]:
+        """
+        Get active signals that meet minimum condition threshold.
+        Super TDI + Super BB specific.
+        """
+        if not self.is_available():
+            return []
+
+        try:
+            active_collection = self.db[self.ACTIVE_COLLECTION]
+            signals = active_collection.find({
+                'status': 'ACTIVE',
+                'conditions_met': {'$gte': min_conditions}
+            }).sort('conditions_met', DESCENDING)
+
+            result = []
+            for signal in signals:
+                signal['_id'] = str(signal['_id'])
+                result.append(signal)
+
+            mongo_logger.debug(f"Found {len(result)} signals with {min_conditions}+ conditions")
+            return result
+
+        except Exception as e:
+            mongo_logger.error(f"Error getting signals by conditions: {e}")
+            return []
+
     def get_resolved_signals(self, limit: int = 100) -> Dict[str, Dict]:
         """Get resolved signals from RESOLVED collection."""
         if not self.is_available():
@@ -496,7 +556,7 @@ class MongoDBClient:
 
     def update_signal_status(self, doc_id: str, status: str, update_data: Dict[str, Any]) -> bool:
         """
-        ✅ FIXED v3.3.1: Complete deletion from active collection when resolved.
+        Complete deletion from active collection when resolved.
 
         - For terminal status (PROFIT/LOSS/BREAK_EVEN):
           1. Save to resolved collection
@@ -544,6 +604,7 @@ class MongoDBClient:
                 if resolved_result.acknowledged:
                     self.metrics["resolved_saves"] += 1
                     mongo_logger.info(f"{EMOJI['RESOLVED']} MONGODB_UPDATE: Signal {doc_id} saved to {self.RESOLVED_COLLECTION} ({status})")
+                    mongo_logger.debug(f"  Conditions: {signal_data.get('conditions_met', 0)}/{signal_data.get('conditions_total', 5)}")
                 else:
                     mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_UPDATE: Failed to save {doc_id} to resolved")
                     return False
@@ -602,6 +663,7 @@ class MongoDBClient:
                 signal_data['_id'] = doc_id
 
             signal_data['resolved_at'] = datetime.now().isoformat()
+            signal_data['strategy_version'] = "3.4.0"
 
             # Save to resolved
             resolved_collection = self.db[self.RESOLVED_COLLECTION]
@@ -667,10 +729,7 @@ class MongoDBClient:
             return False
 
     def cleanup_orphaned_active_signals(self) -> int:
-        """
-        ✅ NEW v3.3.1: Clean up orphaned active signals that should have been deleted.
-        Finds signals in active that have terminal status and deletes them.
-        """
+        """Clean up orphaned active signals that should have been deleted."""
         if not self.is_available():
             return 0
 
@@ -678,7 +737,6 @@ class MongoDBClient:
             active_collection = self.db[self.ACTIVE_COLLECTION]
             terminal_statuses = ['PROFIT', 'LOSS', 'BREAK_EVEN', 'CLOSED', 'RESOLVED']
 
-            # Find orphaned signals with terminal status
             orphaned = active_collection.find({'status': {'$in': terminal_statuses}})
             orphaned_list = list(orphaned)
             deleted_count = 0
@@ -701,6 +759,59 @@ class MongoDBClient:
             mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_CLEANUP: Failed - {e}")
             return 0
 
+    # ==================== SUPER TDI + SUPER BB STATS ====================
+
+    def get_strategy_stats(self) -> Dict[str, Any]:
+        """Get Super TDI + Super BB specific statistics."""
+        if not self.is_available():
+            return {}
+
+        try:
+            active_collection = self.db[self.ACTIVE_COLLECTION]
+
+            # Count signals by condition level
+            signals_by_conditions = {}
+            for i in range(1, 6):
+                count = active_collection.count_documents({
+                    'status': 'ACTIVE',
+                    'conditions_met': i
+                })
+                signals_by_conditions[f"{i}_conditions"] = count
+
+            # Count by signal strength
+            hard_count = active_collection.count_documents({
+                'status': 'ACTIVE',
+                'signal_strength': 'HARD'
+            })
+            soft_count = active_collection.count_documents({
+                'status': 'ACTIVE',
+                'signal_strength': 'SOFT'
+            })
+
+            # Count by AI decision
+            ai_approved = active_collection.count_documents({
+                'status': 'ACTIVE',
+                'ai_decision': 'APPROVE'
+            })
+            ai_rejected = active_collection.count_documents({
+                'status': 'ACTIVE',
+                'ai_decision': 'REJECT'
+            })
+
+            return {
+                'active_signals': active_collection.count_documents({'status': 'ACTIVE'}),
+                'signals_by_conditions': signals_by_conditions,
+                'hard_signals': hard_count,
+                'soft_signals': soft_count,
+                'ai_approved': ai_approved,
+                'ai_rejected': ai_rejected,
+                'total_saved': self.metrics.get('signals_saved', 0),
+            }
+
+        except Exception as e:
+            mongo_logger.error(f"Error getting strategy stats: {e}")
+            return {}
+
     # ==================== STATS OPERATIONS ====================
 
     def save_stats(self, stats: Dict[str, Any]) -> bool:
@@ -711,6 +822,8 @@ class MongoDBClient:
         try:
             collection = self.db[self.STATS_COLLECTION]
             stats['updated_at'] = datetime.now().isoformat()
+            stats['strategy_version'] = "3.4.0"
+            stats['strategy_name'] = "Super TDI + Super Bollinger Bands"
 
             result = collection.update_one(
                 {'_id': 'bot_stats'},
@@ -753,6 +866,7 @@ class MongoDBClient:
         try:
             collection = self.db[self.ERRORS_COLLECTION]
             error_data['timestamp'] = datetime.now().isoformat()
+            error_data['strategy_version'] = "3.4.0"
 
             result = collection.insert_one(error_data)
             return result.acknowledged
@@ -768,7 +882,6 @@ class MongoDBClient:
         symbol = data.get('symbol', 'UNKNOWN')
         signal_type = data.get('signal_type', 'UNKNOWN')
         timestamp = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
-
         return f"{symbol}_{signal_type}_{timestamp}"
 
     def get_collection_stats(self, collection_name: str) -> Dict:
