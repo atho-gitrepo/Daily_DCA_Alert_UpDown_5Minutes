@@ -32,6 +32,7 @@ from utils.binance_data_client import binance_client
 from utils.mongodb_client import mongodb_client
 
 # Indicators
+from utils import calculate_all_indicators
 from utils.indicators import Indicators
 
 # Signal Manager
