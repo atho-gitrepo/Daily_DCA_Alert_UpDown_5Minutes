@@ -60,10 +60,10 @@ class TDIDetector:
 
         Returns:
             {
-                'bullish_cross': bool,   # Green crossed above Red
-                'bearish_cross': bool,   # Green crossed below Red
-                'green_above_red': bool, # Green currently above Red
-                'green_below_red': bool, # Green currently below Red
+                'bullish_cross': bool,
+                'bearish_cross': bool,
+                'green_above_red': bool,
+                'green_below_red': bool,
                 'tdi_fast': float,
                 'tdi_slow': float,
             }
@@ -108,6 +108,8 @@ class TDIDetector:
                 'tdi_zone_description': str,
                 'bullish_cross': bool,
                 'bearish_cross': bool,
+                'green_above_red': bool,
+                'green_below_red': bool,
                 'confidence': float,
                 'signal_strength': 'HARD' or 'SOFT',
                 'risk_multiplier': float,
@@ -133,6 +135,8 @@ class TDIDetector:
         crossovers = self.detect_crossovers(df)
         bullish_cross = crossovers.get('bullish_cross', False)
         bearish_cross = crossovers.get('bearish_cross', False)
+        green_above_red = crossovers.get('green_above_red', False)
+        green_below_red = crossovers.get('green_below_red', False)
 
         # Check for opportunities
         buy_zones = ['OVERSOLD', 'SOFT_BUY', 'BUY_ZONE']
@@ -146,44 +150,60 @@ class TDIDetector:
             'tdi_zone_description': zone_desc,
             'bullish_cross': bullish_cross,
             'bearish_cross': bearish_cross,
+            'green_above_red': green_above_red,
+            'green_below_red': green_below_red,
             'tdi_fast': tdi_fast,
             'tdi_slow': tdi_slow,
+            'confidence': 0.0,
+            'signal_strength': 'NONE',
+            'risk_multiplier': 1.0,
+            'reason': '',
         }
 
-        # BUY opportunity
-        if zone in buy_zones:
-            if bullish_cross or tdi_fast > tdi_slow:
-                result['opportunity'] = True
-                result['direction'] = 'BUY'
-                result['confidence'] = 0.7
-                result['reason'] = f"BUY: {zone_desc}"
+        # BUY opportunity - Check TDI in buy zone AND green above red
+        if zone in buy_zones and (green_above_red or bullish_cross):
+            result['opportunity'] = True
+            result['direction'] = 'BUY'
+            result['confidence'] = 0.7
+            result['reason'] = f"BUY: {zone_desc}"
 
-                if zone == 'OVERSOLD':
-                    result['signal_strength'] = 'HARD'
-                    result['risk_multiplier'] = 2.0
-                    result['confidence'] = 0.85
-                else:
-                    result['signal_strength'] = 'SOFT'
-                    result['risk_multiplier'] = 1.0
+            if zone == 'OVERSOLD':
+                result['signal_strength'] = 'HARD'
+                result['risk_multiplier'] = 2.0
+                result['confidence'] = 0.85
+            else:
+                result['signal_strength'] = 'SOFT'
+                result['risk_multiplier'] = 1.0
 
-        # SELL opportunity
-        elif zone in sell_zones:
-            if bearish_cross or tdi_fast < tdi_slow:
-                result['opportunity'] = True
-                result['direction'] = 'SELL'
-                result['confidence'] = 0.7
-                result['reason'] = f"SELL: {zone_desc}"
+        # SELL opportunity - Check TDI in sell zone AND green below red
+        elif zone in sell_zones and (green_below_red or bearish_cross):
+            result['opportunity'] = True
+            result['direction'] = 'SELL'
+            result['confidence'] = 0.7
+            result['reason'] = f"SELL: {zone_desc}"
 
-                if zone == 'OVERBOUGHT':
-                    result['signal_strength'] = 'HARD'
-                    result['risk_multiplier'] = 2.0
-                    result['confidence'] = 0.85
-                else:
-                    result['signal_strength'] = 'SOFT'
-                    result['risk_multiplier'] = 1.0
+            if zone == 'OVERBOUGHT':
+                result['signal_strength'] = 'HARD'
+                result['risk_multiplier'] = 2.0
+                result['confidence'] = 0.85
+            else:
+                result['signal_strength'] = 'SOFT'
+                result['risk_multiplier'] = 1.0
 
         else:
-            result['reason'] = f"NO TRADE: {zone_desc}"
+            # No opportunity - check why
+            if zone in buy_zones:
+                if not green_above_red and not bullish_cross:
+                    result['reason'] = f"TDI in {zone} but green not above red (Fast: {tdi_fast:.1f}, Slow: {tdi_slow:.1f})"
+                else:
+                    result['reason'] = f"TDI in {zone} but no signal"
+            elif zone in sell_zones:
+                if not green_below_red and not bearish_cross:
+                    result['reason'] = f"TDI in {zone} but green not below red (Fast: {tdi_fast:.1f}, Slow: {tdi_slow:.1f})"
+                else:
+                    result['reason'] = f"TDI in {zone} but no signal"
+            else:
+                result['reason'] = f"NO TRADE: {zone_desc}"
 
         return result
 
@@ -197,6 +217,8 @@ class TDIDetector:
             'tdi_zone_description': 'No trade zone',
             'bullish_cross': False,
             'bearish_cross': False,
+            'green_above_red': False,
+            'green_below_red': False,
             'tdi_fast': 50,
             'tdi_slow': 50,
             'confidence': 0,
