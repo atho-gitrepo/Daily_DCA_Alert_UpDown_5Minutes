@@ -2205,7 +2205,24 @@ def get_missing_columns(df: pd.DataFrame) -> List[str]:
         return REQUIRED_COLUMNS
 
     return [col for col in REQUIRED_COLUMNS if col not in df.columns]
+# ==================== STANDALONE WRAPPER FUNCTIONS ====================
 
+def calculate_bollinger_bands(df: pd.DataFrame, period: int = 34, dev: float = 1.750) -> pd.DataFrame:
+    """Wrapper for Indicators.calculate_bollinger_bands()."""
+    return Indicators.calculate_bollinger_bands(df, period, dev)
+
+def calculate_tdi(df: pd.DataFrame, rsi_period: int = 10, bb_length: int = 20,
+                  fast_ma_period: int = 1, slow_ma_period: int = 5) -> pd.DataFrame:
+    """Wrapper for Indicators.calculate_tdi()."""
+    return Indicators.calculate_tdi(df, rsi_period, bb_length, fast_ma_period, slow_ma_period)
+
+def calculate_sma(df: pd.DataFrame, column: str, period: int) -> pd.DataFrame:
+    """Wrapper for Indicators.calculate_sma()."""
+    return Indicators.calculate_sma(df, column, period)
+
+def calculate_ema(df: pd.DataFrame, column: str, period: int) -> pd.DataFrame:
+    """Wrapper for Indicators.calculate_ema()."""
+    return Indicators.calculate_ema(df, column, period)
 
 # Create singleton instance
 indicators = Indicators()
@@ -2213,6 +2230,11 @@ indicators = Indicators()
 __all__ = [
     "indicators",
     "Indicators",
+    "calculate_bollinger_bands",   # ✅ Now exists
+    "calculate_tdi",               # ✅ Now exists
+    "calculate_sma",               # ✅ Now exists
+    "calculate_ema",               # ✅ Now exists
+    "calculate_all_indicators",
     "calculate_heikin_ashi",
     "validate_dataframe",
     "get_missing_columns",
