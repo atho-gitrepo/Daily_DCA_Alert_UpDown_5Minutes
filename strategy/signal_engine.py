@@ -1,6 +1,5 @@
 """
-Signal Engine - Super TDI + Super Bollinger Bands
-Combines all strategy components with cheat sheet generation.
+Signal Engine - Super TDI + Super Bollinger Bands with AI
 """
 
 import pandas as pd
@@ -11,44 +10,52 @@ from datetime import datetime
 from strategy.tdi_detector import TDIDetector
 from strategy.bb_detector import BBDetector
 from strategy.cheat_sheet import SignalCheatSheet
+from strategy.ai_analyzer import ai_analyzer
+from settings import config
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SignalEngine:
     """
-    Main Signal Engine combining Super TDI and Super Bollinger Bands.
-
-    Strategy Rules:
-    1. TDI in buyer/seller zone
-    2. Green line crossing above/below Red (crossover)
-    3. Price touches Bollinger Band (oversold/overbought)
-    4. Candles getting smaller (momentum loss)
-    5. Price moving back inside band (reversal)
-
-    ALL 5 = ENTER TRADE
+    Signal Engine combining Super TDI and Super Bollinger Bands with AI validation.
     """
 
-    def __init__(self):
+    def __init__(self, use_ai: bool = True):  # ✅ ADD THIS PARAMETER
+        """
+        Initialize Signal Engine.
+
+        Args:
+            use_ai: Whether to use AI validation (default: True)
+        """
         self.tdi_detector = TDIDetector()
         self.bb_detector = BBDetector()
         self.cheat_sheet = SignalCheatSheet()
+        self.use_ai = use_ai and ai_analyzer.enabled if ai_analyzer else False
 
         self.last_signal = None
         self.last_signal_time = None
 
         # Risk parameters
-        self.min_rrr = 1.5
-        self.default_rrr = 2.0
-        self.max_rrr = 4.0
+        self.min_rrr = getattr(config.strategy, 'min_rrr', 1.5)
+        self.default_rrr = getattr(config.strategy, 'default_rrr', 2.0)
+        self.max_rrr = getattr(config.strategy, 'max_rrr', 4.0)
+
+        logger.info(f"🔧 Signal Engine initialized - AI: {'✅' if self.use_ai else '❌'}")
 
     def process(self, df: pd.DataFrame, symbol: str = "UNKNOWN") -> Dict[str, Any]:
         """
-        Process data and generate signals.
+        Process data and generate signals with AI validation.
 
         Returns:
             {
                 'signal': 'BUY' or 'SELL' or 'NO_TRADE',
                 'direction': 'BUY' or 'SELL' or 'NONE',
                 'cheat_sheet': str,
+                'ai_decision': str,
+                'ai_reasoning': str,
+                'ai_confidence': float,
                 'entry_price': float,
                 'stop_loss': float,
                 'take_profit': float,
@@ -59,6 +66,7 @@ class SignalEngine:
                 'bb_position': float,
                 'reasons': list,
                 'timestamp': str,
+                'ai_analysis': dict,
             }
         """
         if df is None or df.empty:
@@ -80,16 +88,110 @@ class SignalEngine:
 
         # Generate signal
         if buy_ok:
-            return self._generate_buy_signal(symbol, df, tdi_result, bb_result, buy_reason)
-
+            signal_data = self._generate_buy_signal(symbol, df, tdi_result, bb_result, buy_reason)
         elif sell_ok:
-            return self._generate_sell_signal(symbol, df, tdi_result, bb_result, sell_reason)
-
+            signal_data = self._generate_sell_signal(symbol, df, tdi_result, bb_result, sell_reason)
         else:
-            # No signal - create wait message
             tdi_level = tdi_result.get('tdi_level', 50)
             tdi_zone = tdi_result.get('tdi_zone', 'UNKNOWN')
             return self._no_signal(symbol, f"TDI: {tdi_level:.1f} ({tdi_zone})")
+
+        # === AI VALIDATION ===
+        if self.use_ai:
+            logger.info(f"🤖 Requesting AI analysis for {symbol} {signal_data.get('direction')} signal...")
+            ai_result = ai_analyzer.analyze_signal(signal_data)
+
+            # Store AI result
+            signal_data['ai_analysis'] = {
+                'decision': ai_result.decision,
+                'confidence': ai_result.confidence,
+                'reasoning': ai_result.reasoning,
+                'signal_strength': ai_result.signal_strength,
+                'risk_level': ai_result.risk_level,
+                'suggested_rrr': ai_result.suggested_rrr,
+                'market_analysis': ai_result.market_analysis,
+                'technical_factors': ai_result.technical_factors,
+                'risk_factors': ai_result.risk_factors,
+                'response_time_ms': ai_result.response_time_ms,
+                'ai_validated': ai_result.ai_validated,
+            }
+
+            signal_data['ai_decision'] = ai_result.decision
+            signal_data['ai_reasoning'] = ai_result.reasoning
+            signal_data['ai_confidence'] = ai_result.confidence
+
+            # If AI rejects, return no trade
+            if ai_result.decision == 'REJECT':
+                signal_data['signal'] = 'NO_TRADE'
+                signal_data['direction'] = 'NONE'
+                signal_data['cheat_sheet'] = self.cheat_sheet.generate_wait_cheat_sheet({
+                    'symbol': symbol,
+                    'tdi_level': signal_data.get('tdi_level', 50),
+                    'reason': f"AI Rejected: {ai_result.reasoning}"
+                })
+                logger.info(f"🚫 AI REJECTED: {symbol} - {ai_result.reasoning}")
+                return signal_data
+
+            # If AI says WAIT, return no trade with reason
+            if ai_result.decision == 'WAIT':
+                signal_data['signal'] = 'NO_TRADE'
+                signal_data['direction'] = 'NONE'
+                signal_data['cheat_sheet'] = self.cheat_sheet.generate_wait_cheat_sheet({
+                    'symbol': symbol,
+                    'tdi_level': signal_data.get('tdi_level', 50),
+                    'reason': f"AI Says Wait: {ai_result.reasoning}"
+                })
+                logger.info(f"⏳ AI WAIT: {symbol} - {ai_result.reasoning}")
+                return signal_data
+
+            # AI approved - update signal with AI insights
+            logger.info(f"✅ AI APPROVED: {symbol} {signal_data.get('direction')} | Confidence: {ai_result.confidence:.0%}")
+
+            # Adjust RRR based on AI suggestion
+            if ai_result.suggested_rrr:
+                signal_data['rrr'] = min(self.max_rrr, max(self.min_rrr, ai_result.suggested_rrr))
+                # Recalculate TP with new RRR
+                current_price = signal_data.get('entry_price', 0)
+                stop_loss = signal_data.get('stop_loss', 0)
+                risk = abs(current_price - stop_loss)
+                if signal_data.get('direction') == 'BUY':
+                    signal_data['take_profit'] = current_price + (signal_data['rrr'] * risk)
+                else:
+                    signal_data['take_profit'] = current_price - (signal_data['rrr'] * risk)
+
+        # Generate cheat sheet with AI notes if available
+        signal_data['cheat_sheet'] = self._generate_ai_enhanced_cheat_sheet(signal_data)
+
+        self.last_signal = signal_data
+        self.last_signal_time = datetime.now()
+
+        return signal_data
+
+    def _generate_ai_enhanced_cheat_sheet(self, signal_data: Dict[str, Any]) -> str:
+        """Generate cheat sheet with AI insights."""
+        direction = signal_data.get('direction', 'NONE')
+
+        # Get base cheat sheet
+        if direction == 'BUY':
+            base = self.cheat_sheet.generate_buy_cheat_sheet(signal_data)
+        elif direction == 'SELL':
+            base = self.cheat_sheet.generate_sell_cheat_sheet(signal_data)
+        else:
+            return self.cheat_sheet.generate_wait_cheat_sheet(signal_data)
+
+        # Add AI insights if available
+        ai_data = signal_data.get('ai_analysis', {})
+        if ai_data:
+            ai_section = f"""
+🤖 AI Analysis
+• Decision: {ai_data.get('decision', 'UNKNOWN')}
+• Confidence: {ai_data.get('confidence', 0)*100:.0f}%
+• Reasoning: {ai_data.get('reasoning', 'N/A')}
+• Risk Level: {ai_data.get('risk_level', 'MEDIUM')}
+"""
+            return base + "\n\n" + ai_section
+
+        return base
 
     def _generate_buy_signal(self, symbol: str, df: pd.DataFrame,
                              tdi_data: Dict, bb_data: Dict,
@@ -108,7 +210,7 @@ class SignalEngine:
         reward = take_profit - current_price
         rrr = reward / risk if risk > 0 else self.default_rrr
 
-        signal_data = {
+        return {
             'symbol': symbol,
             'direction': 'BUY',
             'signal': 'BUY',
@@ -121,6 +223,7 @@ class SignalEngine:
             'tdi_zone': tdi_data.get('tdi_zone', 'UNKNOWN'),
             'tdi_zone_description': tdi_data.get('tdi_zone_description', ''),
             'tdi_bullish_cross': tdi_data.get('bullish_cross', False),
+            'tdi_bearish_cross': tdi_data.get('bearish_cross', False),
             'tdi_fast': tdi_data.get('tdi_fast', 50),
             'tdi_slow': tdi_data.get('tdi_slow', 50),
             'bb_position': bb_data.get('position', 0.5),
@@ -132,16 +235,12 @@ class SignalEngine:
             'risk_multiplier': tdi_data.get('risk_multiplier', 1.0),
             'reason': reason,
             'timestamp': datetime.now().isoformat(),
-            'cheat_sheet': None,  # Will be generated
+            'cheat_sheet': None,
+            'ai_decision': 'PENDING',
+            'ai_reasoning': 'Awaiting AI analysis...',
+            'ai_confidence': 0.0,
+            'ai_analysis': {},
         }
-
-        # Generate cheat sheet
-        signal_data['cheat_sheet'] = self.cheat_sheet.generate_buy_cheat_sheet(signal_data)
-
-        self.last_signal = signal_data
-        self.last_signal_time = datetime.now()
-
-        return signal_data
 
     def _generate_sell_signal(self, symbol: str, df: pd.DataFrame,
                               tdi_data: Dict, bb_data: Dict,
@@ -160,7 +259,7 @@ class SignalEngine:
         reward = current_price - take_profit
         rrr = reward / risk if risk > 0 else self.default_rrr
 
-        signal_data = {
+        return {
             'symbol': symbol,
             'direction': 'SELL',
             'signal': 'SELL',
@@ -172,6 +271,7 @@ class SignalEngine:
             'tdi_level': tdi_data.get('tdi_level', 50),
             'tdi_zone': tdi_data.get('tdi_zone', 'UNKNOWN'),
             'tdi_zone_description': tdi_data.get('tdi_zone_description', ''),
+            'tdi_bullish_cross': tdi_data.get('bullish_cross', False),
             'tdi_bearish_cross': tdi_data.get('bearish_cross', False),
             'tdi_fast': tdi_data.get('tdi_fast', 50),
             'tdi_slow': tdi_data.get('tdi_slow', 50),
@@ -184,16 +284,12 @@ class SignalEngine:
             'risk_multiplier': tdi_data.get('risk_multiplier', 1.0),
             'reason': reason,
             'timestamp': datetime.now().isoformat(),
-            'cheat_sheet': None,  # Will be generated
+            'cheat_sheet': None,
+            'ai_decision': 'PENDING',
+            'ai_reasoning': 'Awaiting AI analysis...',
+            'ai_confidence': 0.0,
+            'ai_analysis': {},
         }
-
-        # Generate cheat sheet
-        signal_data['cheat_sheet'] = self.cheat_sheet.generate_sell_cheat_sheet(signal_data)
-
-        self.last_signal = signal_data
-        self.last_signal_time = datetime.now()
-
-        return signal_data
 
     def _no_signal(self, symbol: str, reason: str) -> Dict[str, Any]:
         """Return no signal result."""
@@ -203,6 +299,10 @@ class SignalEngine:
             'direction': 'NONE',
             'reason': reason,
             'timestamp': datetime.now().isoformat(),
+            'ai_decision': 'NONE',
+            'ai_reasoning': 'No signal to analyze',
+            'ai_confidence': 0.0,
+            'ai_analysis': {},
         }
         data['cheat_sheet'] = self.cheat_sheet.generate_wait_cheat_sheet(data)
         return data
