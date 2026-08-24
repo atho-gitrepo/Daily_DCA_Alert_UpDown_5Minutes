@@ -88,11 +88,11 @@ bot_stats = {
         'bb_touch': True,
         'candle_shrinking': True,
         'reversal_confirmation': True,
-        'divergence': config.strategy.enable_divergence,
-        'candle_patterns': config.strategy.enable_candle_patterns,
-        'support_resistance': config.strategy.enable_support_resistance,
-        'bb_squeeze': config.strategy.enable_bb_squeeze,
-        'session_filtering': config.strategy.enable_session_filtering,
+        'divergence': config.strategy.enable_divergence if hasattr(config.strategy, 'enable_divergence') else True,
+        'candle_patterns': config.strategy.enable_candle_patterns if hasattr(config.strategy, 'enable_candle_patterns') else True,
+        'support_resistance': config.strategy.enable_support_resistance if hasattr(config.strategy, 'enable_support_resistance') else True,
+        'bb_squeeze': config.strategy.enable_bb_squeeze if hasattr(config.strategy, 'enable_bb_squeeze') else True,
+        'session_filtering': config.strategy.enable_session_filtering if hasattr(config.strategy, 'enable_session_filtering') else True,
         'ai_validation': ai_analyzer.enabled if ai_analyzer else False,
     },
 }
@@ -182,7 +182,8 @@ def check_conditions(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     conditions_met = sum(1 for v in conditions.values() if v)
     conditions_total = 5
 
-    is_valid = conditions_met >= config.strategy.min_conditions_for_signal
+    min_conditions = getattr(config.strategy, 'min_conditions_for_signal', 3)
+    is_valid = conditions_met >= min_conditions
 
     return {
         'valid': is_valid,
@@ -460,8 +461,13 @@ def main():
     logger.info(f"📈 Symbols: {config.market.symbols}")
     logger.info(f"⏱️ Timeframe: {config.market.timeframe}")
     logger.info(f"📋 HTF: {config.market.htf_timeframe}")
-    logger.info(f"🎯 Run Mode: {config.run_mode}")
-    logger.info(f"📊 Min Conditions: {config.strategy.min_conditions_for_signal}/5")
+
+    # ✅ FIXED: Access run_mode from deployment
+    run_mode = config.deployment.run_mode.value if hasattr(config.deployment, 'run_mode') else "UNKNOWN"
+    logger.info(f"🎯 Run Mode: {run_mode}")
+
+    min_conditions = getattr(config.strategy, 'min_conditions_for_signal', 3)
+    logger.info(f"📊 Min Conditions: {min_conditions}/5")
     logger.info("=" * 70)
 
     # Setup signal handlers
@@ -482,15 +488,15 @@ def main():
         telegram_bot.send_startup_message(
             symbols=symbols,
             config_info={
-                'environment': config.deployment.environment.value,
+                'environment': config.deployment.environment.value if hasattr(config.deployment, 'environment') else 'unknown',
                 'timeframe': config.market.timeframe,
-                'ltf_timeframe': config.market.ltf_timeframe,
+                'ltf_timeframe': getattr(config.market, 'ltf_timeframe', '1m'),
                 'htf_timeframe': config.market.htf_timeframe,
                 'ai_enabled': ai_analyzer.enabled,
-                'min_conditions': config.strategy.min_conditions_for_signal,
-                'rrr_range': f"{config.strategy.min_rrr}-{config.strategy.max_rrr}",
-                'bb_period': config.strategy.bb_period,
-                'bb_deviation': config.strategy.bb_deviation,
+                'min_conditions': min_conditions,
+                'rrr_range': f"{getattr(config.strategy, 'min_rrr', 1.5)}-{getattr(config.strategy, 'max_rrr', 4.0)}",
+                'bb_period': getattr(config.strategy, 'bb_period', 34),
+                'bb_deviation': getattr(config.strategy, 'bb_deviation', 1.75),
             }
         )
 
@@ -526,7 +532,7 @@ def main():
 
             # Sleep
             elapsed = time.time() - start_time
-            polling_interval = config.market.polling_interval_seconds
+            polling_interval = getattr(config.market, 'polling_interval_seconds', 30)
             sleep_time = max(0, polling_interval - elapsed)
             if sleep_time > 0:
                 time.sleep(sleep_time)
@@ -554,8 +560,8 @@ def main():
             'signals_generated': bot_stats['signals_generated'],
             'ai_approved': bot_stats['ai_approved'],
             'ai_rejected': bot_stats['ai_rejected'],
-            'total_pnl': 0,  # Tracked elsewhere
-            'avg_rrr': 0,    # Tracked elsewhere
+            'total_pnl': 0,
+            'avg_rrr': 0,
         })
 
     logger.info(f"{EMOJI['RESULT']} Final stats: {bot_stats['signals_generated']} signals generated")
