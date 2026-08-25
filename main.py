@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-AI Trading Bot v3.4.1 - Main Entry Point
-Super TDI + Super Bollinger Bands + 1H Trend Following Strategy
+AI Trading Bot v3.4.2 - Main Entry Point
+Super TDI + MACD + Super Bollinger Bands Strategy
+ALIGNED WITH MANUAL STRATEGY: RSI (TDI) primary + MACD secondary + BB entry
 """
 
 import os
@@ -41,7 +42,7 @@ from utils.signal_manager import signal_manager
 # Telegram
 from utils.telegram_bot import telegram_bot
 
-# Strategy - Super TDI + Super Bollinger Bands + HTF Trend Following
+# Strategy - Super TDI + MACD + Super Bollinger Bands
 from strategy.signal_engine import SignalEngine
 from strategy.ai_analyzer import ai_analyzer
 from strategy.cheat_sheet import SignalCheatSheet
@@ -65,7 +66,8 @@ EMOJI = {
     "GRADE_B": "🥈", "GRADE_C": "🥉", "DIVERGENCE": "↩️",
     "PATTERN": "🕯️", "S_R": "📊", "SESSION": "🌍", "STRUCTURE": "🏗️",
     "REGIME": "📈", "STATE": "🔄", "FETCH": "📊", "TDI": "📈",
-    "BB": "📊", "CANDLE": "🕯️", "CHEAT": "📋", "EXIT": "⏰",
+    "BB": "📊", "MACD": "📊", "CANDLE": "🕯️", "CHEAT": "📋",
+    "EXIT": "⏰",
 }
 
 # ========== GLOBAL STATE ==========
@@ -87,12 +89,13 @@ bot_stats = {
     },
     'total_pnl': 0.0,
     'errors': 0,
-    'version': '3.4.1',
-    'strategy': 'Super TDI + Super Bollinger Bands + 1H Trend Following',
+    'version': '3.4.2',
+    'strategy': 'Super TDI + MACD + Super Bollinger Bands',
     'ai_enabled': ai_analyzer.enabled if ai_analyzer else False,
     'mongodb_enabled': mongodb_client.is_available() if mongodb_client else False,
     'features': {
         'tdi_zones': True,
+        'macd_confirmation': getattr(config.strategy, 'require_macd_confirmation', True),
         'bb_touch': True,
         'candle_shrinking': True,
         'reversal_confirmation': True,
@@ -102,7 +105,7 @@ bot_stats = {
         'bb_squeeze': getattr(config.strategy, 'enable_bb_squeeze', True),
         'session_filtering': getattr(config.strategy, 'enable_session_filtering', True),
         'ai_validation': ai_analyzer.enabled if ai_analyzer else False,
-        'htf_trend_alignment': getattr(config.strategy, 'require_htf_alignment', True),
+        'htf_trend_alignment': getattr(config.strategy, 'require_htf_alignment', False),
     },
 }
 
@@ -166,7 +169,7 @@ def fetch_data(symbol: str, timeframe: str = '5m') -> Optional[pd.DataFrame]:
         if df is None or df.empty:
             return None
 
-        # Calculate all indicators
+        # Calculate all indicators (includes MACD now)
         df = calculate_all_indicators(df)
         return df
 
@@ -203,7 +206,7 @@ def check_conditions(signal_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
-    """Process a single symbol using Super TDI + Super BB + HTF Trend strategy."""
+    """Process a single symbol using Super TDI + MACD + Super BB strategy."""
 
     if signal_manager is None:
         logger.warning(f"{EMOJI['WARNING']} Signal manager not available for {symbol}")
@@ -214,21 +217,21 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
         if signal_manager.is_symbol_locked(symbol):
             return None
 
-        # Fetch LTF data (5m)
+        # Fetch LTF data (5m) - includes MACD now
         df = fetch_data(symbol, config.market.timeframe)
         if df is None:
             return None
 
-        # Fetch HTF data (1h) for trend alignment
+        # Fetch HTF data (1h) for CONTEXT only (NOT a filter)
         htf_df = fetch_data(symbol, config.market.htf_timeframe)
         if htf_df is None:
-            logger.debug(f"{symbol}: No HTF data available, continuing without trend filter")
+            logger.debug(f"{symbol}: No HTF data available, continuing without context")
             htf_df = None
 
         # Create signal engine (use AI if enabled)
         signal_engine = SignalEngine(use_ai=ai_analyzer.enabled if ai_analyzer else False)
 
-        # Process signal with HTF data
+        # Process signal with HTF data (HTF is context only, NOT a filter)
         signal = signal_engine.process(df, symbol, htf_df=htf_df)
 
         if signal is None or signal.get('signal') == 'NO_TRADE':
@@ -312,12 +315,13 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                                 sr_confirmed=signal.get('sr_confirmed', False),
                                 bb_squeeze=signal.get('bb_squeeze', False),
                                 session=signal.get('session', 'UNKNOWN'),
+                                # MACD
+                                macd_bullish=signal.get('macd_bullish', False),
+                                macd_histogram=signal.get('macd_histogram', 0.0),
                                 # Cheat sheet
                                 cheat_sheet=signal.get('cheat_sheet', ''),
                                 # Hold info
                                 max_hold_minutes=60,
-                                # HTF Trend Info
-                                htf_aligned=signal.get('htf_aligned', True),
                             )
                         except Exception as e:
                             logger.warning(f"Telegram error for {symbol}: {e}")
@@ -329,9 +333,13 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                         print(cheat_sheet)
                         if ai_decision == 'APPROVE':
                             print(f"\n🤖 AI Decision: {ai_decision} (Confidence: {signal.get('ai_confidence', 0.8)*100:.0f}%)")
+                        # Print MACD info
+                        macd_bullish = signal.get('macd_bullish', False)
+                        macd_histogram = signal.get('macd_histogram', 0.0)
+                        print(f"\n📊 MACD: {'BULLISH ✅' if macd_bullish else 'NEUTRAL'} (Histogram: {macd_histogram:.4f})")
                         print("=" * 70 + "\n")
 
-                    logger.info(f"{EMOJI['SIGNAL']} {signal.get('direction')} {symbol} @ {signal.get('entry_price', 0):.4f} | Conditions: {condition_check['conditions_met']}/{condition_check['conditions_total']} | AI: {ai_decision} | Grade: {signal.get('grade', 'C')} | Score: {signal.get('quality_score', 0)}")
+                    logger.info(f"{EMOJI['SIGNAL']} {signal.get('direction')} {symbol} @ {signal.get('entry_price', 0):.4f} | Conditions: {condition_check['conditions_met']}/{condition_check['conditions_total']} | AI: {ai_decision} | Grade: {signal.get('grade', 'C')} | Score: {signal.get('quality_score', 0)} | MACD: {'✅' if signal.get('macd_bullish', False) else '❌'}")
                     return signal
 
             elif ai_decision == 'REJECT':
@@ -440,8 +448,8 @@ def run_health_server():
                 self.end_headers()
                 status_data = {
                     'status': 'running' if running else 'stopped',
-                    'version': '3.4.1',
-                    'strategy': 'Super TDI + Super Bollinger Bands + 1H Trend Following',
+                    'version': '3.4.2',
+                    'strategy': 'Super TDI + MACD + Super Bollinger Bands',
                     'timestamp': datetime.now().isoformat(),
                     'stats': bot_stats,
                     'active_signals': len(signal_manager.active_signals) if signal_manager else 0,
@@ -451,7 +459,13 @@ def run_health_server():
                         'max_hold_minutes': 60,
                         'min_hold_minutes': 15,
                     },
-                    'features': bot_stats['features']
+                    'features': bot_stats['features'],
+                    'macd_settings': {
+                        'fast': getattr(config.strategy, 'macd_fast', 12),
+                        'slow': getattr(config.strategy, 'macd_slow', 26),
+                        'signal': getattr(config.strategy, 'macd_signal', 9),
+                        'required': getattr(config.strategy, 'require_macd_confirmation', True),
+                    }
                 }
                 self.wfile.write(json.dumps(status_data, indent=2).encode())
             else:
@@ -481,14 +495,14 @@ def main():
     global running
 
     logger.info("=" * 70)
-    logger.info(f"{EMOJI['START']} AI TRADING BOT v3.4.1")
-    logger.info("📊 SUPER TDI + SUPER BOLLINGER BANDS + 1H TREND FOLLOWING")
+    logger.info(f"{EMOJI['START']} AI TRADING BOT v3.4.2")
+    logger.info("📊 SUPER TDI + MACD + SUPER BOLLINGER BANDS STRATEGY")
     logger.info("=" * 70)
     logger.info("📋 Strategy Features:")
-    logger.info("  - Super TDI Zones (25/35/50/65/75)")
+    logger.info("  - Super TDI Zones (25/35/50/65/75) - Your RSI")
+    logger.info("  - MACD Confirmation (Fast=12, Slow=26, Signal=9)")
     logger.info("  - Super Bollinger Bands (34 period, 1.75 dev)")
     logger.info("  - 5-Step Entry Checklist")
-    logger.info("  - 1H Trend Following (MA7/25/99)")
     logger.info("  - Cheat Sheet Explanations")
     logger.info("  - Divergence Detection")
     logger.info("  - Candle Pattern Recognition")
@@ -506,12 +520,14 @@ def main():
     logger.info("=" * 70)
     logger.info(f"📈 Symbols: {config.market.symbols}")
     logger.info(f"⏱️ Timeframe: {config.market.timeframe}")
-    logger.info(f"📋 HTF: {config.market.htf_timeframe}")
+    logger.info(f"📋 HTF: {config.market.htf_timeframe} (Context Only)")
     logger.info(f"🎯 Run Mode: {config.deployment.run_mode.value if hasattr(config.deployment, 'run_mode') else 'UNKNOWN'}")
     min_conditions = getattr(config.strategy, 'min_conditions_for_signal', 3)
-    htf_required = getattr(config.strategy, 'require_htf_alignment', True)
+    htf_required = getattr(config.strategy, 'require_htf_alignment', False)
+    macd_required = getattr(config.strategy, 'require_macd_confirmation', True)
     logger.info(f"📊 Min Conditions: {min_conditions}/5")
-    logger.info(f"📊 HTF Alignment Required: {'✅' if htf_required else '❌'}")
+    logger.info(f"📊 MACD Required: {'✅' if macd_required else '❌'}")
+    logger.info(f"📊 HTF Alignment Required: {'✅' if htf_required else '❌'} (DISABLED - Context Only)")
     logger.info("=" * 70)
 
     # Setup signal handlers
@@ -543,6 +559,12 @@ def main():
                 'bb_deviation': getattr(config.strategy, 'bb_deviation', 1.75),
                 'max_hold_minutes': 60,
                 'htf_alignment_required': htf_required,
+                'macd_required': macd_required,
+                'macd_settings': {
+                    'fast': getattr(config.strategy, 'macd_fast', 12),
+                    'slow': getattr(config.strategy, 'macd_slow', 26),
+                    'signal': getattr(config.strategy, 'macd_signal', 9),
+                }
             }
         )
 

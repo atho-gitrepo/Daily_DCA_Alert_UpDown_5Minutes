@@ -1,7 +1,7 @@
 """
-Technical Indicators Library - SUPER TDI + SUPER BOLLINGER BANDS STRATEGY
-ALIGNED WITH: Super TDI + Super Bollinger Bands + 5-Step Checklist
-Version: 3.4.0 - ALIGNED: Added Super TDI + Super BB strategy methods
+Technical Indicators Library - SUPER TDI + MACD + SUPER BOLLINGER BANDS
+ALIGNED WITH: Super TDI + MACD + Super Bollinger Bands + 5-Step Checklist
+Version: 3.4.2 - ADDED: MACD indicator for confirmation
 """
 
 import pandas as pd
@@ -32,6 +32,7 @@ EMOJI = {
     "HEIKIN": "🕯️",
     "TDI": "📈",
     "BB": "📉",
+    "MACD": "📊",
     "LTF": "⏱️",
     "FALLBACK": "🔄",
     "DIVERGENCE": "↩️",
@@ -70,7 +71,7 @@ def log_indicator_operation(operation: str, status: str, details: Optional[Dict]
         indicator_logger.debug(log_message)
 
 
-# Updated required columns list for Super TDI + Super BB
+# Updated required columns list for Super TDI + MACD + Super BB
 REQUIRED_COLUMNS = [
     'open', 'high', 'low', 'close', 'volume',
     'tdi_slow_ma', 'tdi_fast_ma', 'tdi_zone', 'tdi_strength',
@@ -79,6 +80,10 @@ REQUIRED_COLUMNS = [
     'ha_color', 'ha_low', 'ha_high', 'ha_close',
     'volume_sma', 'volume_ratio',
     'rsi',
+    # MACD columns
+    'macd', 'macd_signal', 'macd_histogram',
+    'macd_bullish', 'macd_bearish',
+    'macd_crossover_bullish', 'macd_crossover_bearish',
 ]
 
 
@@ -169,6 +174,30 @@ def _add_default_bb_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _add_default_macd_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add default MACD columns to DataFrame."""
+    if df is None:
+        return pd.DataFrame()
+
+    df = df.copy()
+    default_cols = {
+        'macd': 0.0,
+        'macd_signal': 0.0,
+        'macd_histogram': 0.0,
+        'macd_bullish': False,
+        'macd_bearish': False,
+        'macd_crossover_bullish': False,
+        'macd_crossover_bearish': False,
+    }
+
+    for col, default_val in default_cols.items():
+        if col not in df.columns:
+            df[col] = default_val
+
+    indicator_logger.debug(f"{EMOJI['FALLBACK']} Added default MACD columns")
+    return df
+
+
 def _add_default_volume_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Add default volume columns to DataFrame."""
     if df is None:
@@ -243,6 +272,117 @@ def calculate_heikin_ashi(df: pd.DataFrame) -> pd.DataFrame:
 
     indicator_logger.debug(f"{EMOJI['HEIKIN']} INDICATOR_HA: Calculated Heikin Ashi for {len(df)} rows")
     return df
+
+
+# ==================== MACD CALCULATION ====================
+
+def calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
+    """
+    Calculate MACD (Moving Average Convergence Divergence).
+
+    Args:
+        df: DataFrame with 'close' column
+        fast: Fast EMA period (default: 12)
+        slow: Slow EMA period (default: 26)
+        signal: Signal line period (default: 9)
+
+    Returns:
+        DataFrame with MACD columns added
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    try:
+        if len(df) < slow:
+            indicator_logger.warning(
+                f"{EMOJI['WARNING']} INDICATOR_MACD: Insufficient data "
+                f"(need {slow}, got {len(df)})"
+            )
+            return _add_default_macd_columns(df)
+
+        # Calculate EMAs
+        exp1 = df['close'].ewm(span=fast, adjust=False).mean()
+        exp2 = df['close'].ewm(span=slow, adjust=False).mean()
+
+        # MACD line
+        macd = exp1 - exp2
+
+        # Signal line
+        macd_signal = macd.ewm(span=signal, adjust=False).mean()
+
+        # Histogram
+        macd_histogram = macd - macd_signal
+
+        # Add to dataframe
+        df['macd'] = macd
+        df['macd_signal'] = macd_signal
+        df['macd_histogram'] = macd_histogram
+
+        # Additional MACD signals
+        df['macd_bullish'] = (macd > macd_signal) & (macd_histogram > macd_histogram.shift(1))
+        df['macd_bearish'] = (macd < macd_signal) & (macd_histogram < macd_histogram.shift(1))
+        df['macd_crossover_bullish'] = (macd > macd_signal) & (macd.shift(1) <= macd_signal.shift(1))
+        df['macd_crossover_bearish'] = (macd < macd_signal) & (macd.shift(1) >= macd_signal.shift(1))
+
+        # Fill NaN values
+        df = df.ffill().bfill()
+
+        log_indicator_operation("MACD", "SUCCESS",
+                               {"fast": fast, "slow": slow, "signal": signal,
+                                "last_hist": round(macd_histogram.iloc[-1], 4) if not df.empty else 0},
+                               emoji=EMOJI['MACD'])
+
+        return df
+
+    except Exception as e:
+        log_indicator_operation("MACD", "FAILURE", {"error": str(e)}, emoji=EMOJI['ERROR'])
+        indicator_logger.error(f"{EMOJI['ERROR']} INDICATOR_MACD: {e}")
+        return _add_default_macd_columns(df)
+
+
+def get_macd_signal(macd: float, signal: float, histogram: float) -> Dict[str, Any]:
+    """
+    Get MACD signal interpretation.
+
+    Returns:
+        {
+            'bullish': bool,
+            'bearish': bool,
+            'strength': str (STRONG/MEDIUM/WEAK),
+            'histogram_rising': bool,
+            'histogram_falling': bool,
+            'crossover': str (BULLISH/BEARISH/NONE),
+            'signal': str (BUY/SELL/HOLD)
+        }
+    """
+    result = {
+        'bullish': macd > signal,
+        'bearish': macd < signal,
+        'histogram_rising': histogram > 0,
+        'histogram_falling': histogram < 0,
+        'strength': 'MEDIUM',
+        'crossover': 'NONE',
+        'signal': 'HOLD'
+    }
+
+    # Determine strength
+    abs_hist = abs(histogram)
+    if abs_hist > 0.5:
+        result['strength'] = 'STRONG'
+    elif abs_hist > 0.2:
+        result['strength'] = 'MEDIUM'
+    else:
+        result['strength'] = 'WEAK'
+
+    # Determine signal
+    if macd > signal and histogram > 0:
+        result['signal'] = 'BUY'
+    elif macd < signal and histogram < 0:
+        result['signal'] = 'SELL'
+
+    return result
 
 
 # ==================== NEW: SUPER TDI STRATEGY METHODS ====================
@@ -481,7 +621,7 @@ def check_super_tdi_sell_setup(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
-# ==================== NEW: SUPER BOLLINGER BANDS STRATEGY METHODS ====================
+# ==================== SUPER BOLLINGER BANDS STRATEGY METHODS ====================
 
 def check_super_bb_buy_setup(df: pd.DataFrame) -> Dict[str, Any]:
     """
@@ -673,11 +813,11 @@ def check_super_bb_sell_setup(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
-# ==================== NEW: COMPLETE STRATEGY CHECK ====================
+# ==================== COMPLETE STRATEGY CHECK ====================
 
 def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
     """
-    Complete Super TDI + Super BB BUY strategy check.
+    Complete Super TDI + Super BB BUY strategy check with MACD.
 
     Checks all 5 conditions:
     1. TDI in buyer zone
@@ -685,6 +825,8 @@ def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
     3. Touch lower Bollinger Band
     4. Candles shrinking (momentum loss)
     5. Reversal confirmed
+
+    Plus MACD confirmation.
 
     Returns:
         {
@@ -696,6 +838,8 @@ def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
             'risk_multiplier': float,
             'reason': str,
             'cheat_sheet': str,
+            'macd_bullish': bool,
+            'macd_histogram': float,
         }
     """
     if df is None or df.empty:
@@ -706,6 +850,14 @@ def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
 
     # Get BB setup
     bb_buy = check_super_bb_buy_setup(df)
+
+    # Get MACD setup
+    macd_bullish = False
+    macd_histogram = 0.0
+    if 'macd' in df.columns and 'macd_signal' in df.columns:
+        last = df.iloc[-1]
+        macd_bullish = last.get('macd_bullish', False) or (last.get('macd', 0) > last.get('macd_signal', 0))
+        macd_histogram = last.get('macd_histogram', 0.0)
 
     # Check each condition
     conditions = {
@@ -719,7 +871,7 @@ def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
     conditions_met = sum(1 for v in conditions.values() if v)
     conditions_total = 5
 
-    # Determine if valid (need at least 4 conditions for strong signal, 3 for soft)
+    # Determine if valid (need at least 3 conditions)
     valid = conditions_met >= 3
 
     # Determine signal strength
@@ -746,11 +898,14 @@ def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
     if conditions['condition_5_reversal_confirm']:
         reason_parts.append("Reversal confirmed")
 
+    if macd_bullish:
+        reason_parts.append("MACD bullish ✅")
+
     reason = f"{conditions_met}/{conditions_total} conditions met: " + " | ".join(reason_parts)
 
     # Build cheat sheet
     cheat_sheet = f"""
-✅ BUY SIGNAL - {df.get('symbol', 'UNKNOWN') if hasattr(df, 'get') else 'UNKNOWN'}
+✅ BUY SIGNAL
 📋 Cheat Sheet:
 
 1. TDI says: "{tdi_buy.get('tdi_zone_description', 'UNKNOWN')}" ✅
@@ -758,8 +913,9 @@ def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
 3. Price {'touched' if conditions['condition_3_bb_touch'] else 'near'} the LOWER Bollinger Band ✅
 4. Candles are {'getting SMALLER' if conditions['condition_4_candles_shrinking'] else 'showing reversal signs'} ✅
 5. Price {'started moving BACK inside' if conditions['condition_5_reversal_confirm'] else 'showing reversal signs'} the band ✅
+6. MACD is {'BULLISH ✅' if macd_bullish else 'NEUTRAL'}
 
-✅ ALL 5 HAPPEN = ENTER BUY TRADE
+✅ ALL CONDITIONS = ENTER BUY TRADE
 """
 
     return {
@@ -775,6 +931,8 @@ def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
         'touch_lower': bb_buy.get('touch_lower', False),
         'candles_shrinking': bb_buy.get('candles_shrinking', False),
         'reversal_confirm': bb_buy.get('reversal_buy', False),
+        'macd_bullish': macd_bullish,
+        'macd_histogram': macd_histogram,
         'reason': reason,
         'cheat_sheet': cheat_sheet,
     }
@@ -782,7 +940,7 @@ def check_super_strategy_buy(df: pd.DataFrame) -> Dict[str, Any]:
 
 def check_super_strategy_sell(df: pd.DataFrame) -> Dict[str, Any]:
     """
-    Complete Super TDI + Super BB SELL strategy check.
+    Complete Super TDI + Super BB SELL strategy check with MACD.
 
     Checks all 5 conditions:
     1. TDI in seller zone
@@ -790,6 +948,8 @@ def check_super_strategy_sell(df: pd.DataFrame) -> Dict[str, Any]:
     3. Touch upper Bollinger Band
     4. Candles shrinking (momentum loss)
     5. Reversal confirmed
+
+    Plus MACD confirmation.
 
     Returns:
         {
@@ -801,6 +961,8 @@ def check_super_strategy_sell(df: pd.DataFrame) -> Dict[str, Any]:
             'risk_multiplier': float,
             'reason': str,
             'cheat_sheet': str,
+            'macd_bearish': bool,
+            'macd_histogram': float,
         }
     """
     if df is None or df.empty:
@@ -811,6 +973,14 @@ def check_super_strategy_sell(df: pd.DataFrame) -> Dict[str, Any]:
 
     # Get BB setup
     bb_sell = check_super_bb_sell_setup(df)
+
+    # Get MACD setup
+    macd_bearish = False
+    macd_histogram = 0.0
+    if 'macd' in df.columns and 'macd_signal' in df.columns:
+        last = df.iloc[-1]
+        macd_bearish = last.get('macd_bearish', False) or (last.get('macd', 0) < last.get('macd_signal', 0))
+        macd_histogram = last.get('macd_histogram', 0.0)
 
     # Check each condition
     conditions = {
@@ -824,7 +994,7 @@ def check_super_strategy_sell(df: pd.DataFrame) -> Dict[str, Any]:
     conditions_met = sum(1 for v in conditions.values() if v)
     conditions_total = 5
 
-    # Determine if valid (need at least 4 conditions for strong signal, 3 for soft)
+    # Determine if valid (need at least 3 conditions)
     valid = conditions_met >= 3
 
     # Determine signal strength
@@ -851,11 +1021,14 @@ def check_super_strategy_sell(df: pd.DataFrame) -> Dict[str, Any]:
     if conditions['condition_5_reversal_confirm']:
         reason_parts.append("Reversal confirmed")
 
+    if macd_bearish:
+        reason_parts.append("MACD bearish ✅")
+
     reason = f"{conditions_met}/{conditions_total} conditions met: " + " | ".join(reason_parts)
 
     # Build cheat sheet
     cheat_sheet = f"""
-🔴 SELL SIGNAL - {df.get('symbol', 'UNKNOWN') if hasattr(df, 'get') else 'UNKNOWN'}
+🔴 SELL SIGNAL
 📋 Cheat Sheet:
 
 1. TDI says: "{tdi_sell.get('tdi_zone_description', 'UNKNOWN')}" ✅
@@ -863,8 +1036,9 @@ def check_super_strategy_sell(df: pd.DataFrame) -> Dict[str, Any]:
 3. Price {'touched' if conditions['condition_3_bb_touch'] else 'near'} the UPPER Bollinger Band ✅
 4. Candles are {'getting SMALLER' if conditions['condition_4_candles_shrinking'] else 'showing reversal signs'} ✅
 5. Price {'started moving BACK inside' if conditions['condition_5_reversal_confirm'] else 'showing reversal signs'} the band ✅
+6. MACD is {'BEARISH ✅' if macd_bearish else 'NEUTRAL'}
 
-✅ ALL 5 HAPPEN = ENTER SELL TRADE
+✅ ALL CONDITIONS = ENTER SELL TRADE
 """
 
     return {
@@ -880,12 +1054,14 @@ def check_super_strategy_sell(df: pd.DataFrame) -> Dict[str, Any]:
         'touch_upper': bb_sell.get('touch_upper', False),
         'candles_shrinking': bb_sell.get('candles_shrinking', False),
         'reversal_confirm': bb_sell.get('reversal_sell', False),
+        'macd_bearish': macd_bearish,
+        'macd_histogram': macd_histogram,
         'reason': reason,
         'cheat_sheet': cheat_sheet,
     }
 
 
-# ==================== NEW: DIVERGENCE DETECTION ====================
+# ==================== DIVERGENCE DETECTION ====================
 
 def detect_divergence(df: pd.DataFrame, lookback: int = 20,
                       price_col: str = 'close',
@@ -1028,7 +1204,7 @@ def detect_divergence(df: pd.DataFrame, lookback: int = 20,
         }
 
 
-# ==================== NEW: CANDLE PATTERN DETECTION ====================
+# ==================== CANDLE PATTERN DETECTION ====================
 
 def detect_candle_patterns(df: pd.DataFrame) -> Dict[str, Any]:
     """
@@ -1691,6 +1867,13 @@ class Indicators:
             df['rsi'] = np.nan
             return df
 
+    # ========== MACD METHODS (NEW) ==========
+
+    @staticmethod
+    def calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
+        """Calculate MACD indicator."""
+        return calculate_macd(df, fast, slow, signal)
+
     # ========== MOVING AVERAGE METHODS ==========
 
     @staticmethod
@@ -1872,7 +2055,7 @@ class Indicators:
 
     @staticmethod
     def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate all indicators with new features."""
+        """Calculate all indicators with new features including MACD."""
         log_indicator_operation("ALL", "START", {"rows": len(df) if df is not None else 0}, emoji=EMOJI['CALC'])
 
         try:
@@ -1914,6 +2097,13 @@ class Indicators:
             except Exception as e:
                 indicator_logger.warning(f"{EMOJI['WARNING']} INDICATOR_ALL: BB calculation failed: {e}")
                 df = _add_default_bb_columns(df)
+
+            # ===== NEW: Calculate MACD =====
+            try:
+                df = Indicators.calculate_macd(df, fast=12, slow=26, signal=9)
+            except Exception as e:
+                indicator_logger.warning(f"{EMOJI['WARNING']} INDICATOR_ALL: MACD calculation failed: {e}")
+                df = _add_default_macd_columns(df)
 
             # Calculate volume indicators
             try:
@@ -2097,7 +2287,7 @@ class Indicators:
             # Ensure required columns exist even on failure
             required_cols = ['tdi_slow_ma', 'tdi_fast_ma', 'tdi_zone', 'tdi_strength',
                            'bb_width_percent', 'bb_position', 'bb_rejection_buy', 'bb_rejection_sell',
-                           'volume_sma', 'volume_ratio']
+                           'volume_sma', 'volume_ratio', 'macd', 'macd_signal', 'macd_histogram']
             for col in required_cols:
                 if col not in df.columns:
                     df[col] = np.nan
@@ -2124,6 +2314,9 @@ class Indicators:
 
             # Calculate Bollinger Bands for LTF
             df = Indicators.calculate_bollinger_bands(df, period=34, dev=1.750)
+
+            # Calculate MACD for LTF
+            df = Indicators.calculate_macd(df, fast=12, slow=26, signal=9)
 
             # Calculate fast EMA for momentum
             df = Indicators.calculate_ema(df, 'close', 9)
@@ -2205,24 +2398,40 @@ def get_missing_columns(df: pd.DataFrame) -> List[str]:
         return REQUIRED_COLUMNS
 
     return [col for col in REQUIRED_COLUMNS if col not in df.columns]
+
+
 # ==================== STANDALONE WRAPPER FUNCTIONS ====================
 
 def calculate_bollinger_bands(df: pd.DataFrame, period: int = 34, dev: float = 1.750) -> pd.DataFrame:
     """Wrapper for Indicators.calculate_bollinger_bands()."""
     return Indicators.calculate_bollinger_bands(df, period, dev)
 
+
 def calculate_tdi(df: pd.DataFrame, rsi_period: int = 10, bb_length: int = 20,
                   fast_ma_period: int = 1, slow_ma_period: int = 5) -> pd.DataFrame:
     """Wrapper for Indicators.calculate_tdi()."""
     return Indicators.calculate_tdi(df, rsi_period, bb_length, fast_ma_period, slow_ma_period)
 
+
+def calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
+    """Wrapper for Indicators.calculate_macd()."""
+    return Indicators.calculate_macd(df, fast, slow, signal)
+
+
 def calculate_sma(df: pd.DataFrame, column: str, period: int) -> pd.DataFrame:
     """Wrapper for Indicators.calculate_sma()."""
     return Indicators.calculate_sma(df, column, period)
 
+
 def calculate_ema(df: pd.DataFrame, column: str, period: int) -> pd.DataFrame:
     """Wrapper for Indicators.calculate_ema()."""
     return Indicators.calculate_ema(df, column, period)
+
+
+def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """Wrapper for Indicators.calculate_all_indicators()."""
+    return Indicators.calculate_all_indicators(df)
+
 
 # Create singleton instance
 indicators = Indicators()
@@ -2230,10 +2439,11 @@ indicators = Indicators()
 __all__ = [
     "indicators",
     "Indicators",
-    "calculate_bollinger_bands",   # ✅ Now exists
-    "calculate_tdi",               # ✅ Now exists
-    "calculate_sma",               # ✅ Now exists
-    "calculate_ema",               # ✅ Now exists
+    "calculate_bollinger_bands",
+    "calculate_tdi",
+    "calculate_macd",
+    "calculate_sma",
+    "calculate_ema",
     "calculate_all_indicators",
     "calculate_heikin_ashi",
     "validate_dataframe",
@@ -2242,6 +2452,7 @@ __all__ = [
     "EPSILON",
     "_add_default_tdi_columns",
     "_add_default_bb_columns",
+    "_add_default_macd_columns",
     "_add_default_volume_columns",
     "_add_default_momentum_columns",
     # Super TDI + Super BB Strategy Methods

@@ -1,7 +1,7 @@
 """
-Telegram Bot for Trading Signals - SUPER TDI + SUPER BOLLINGER BANDS
-ALIGNED: Super TDI + Super BB Strategy with Cheat Sheet & AI Insights
-Version: 3.4.0 - ALIGNED: Super TDI + Super BB strategy display
+Telegram Bot for Trading Signals - SUPER TDI + MACD + SUPER BOLLINGER BANDS
+ALIGNED: Super TDI + MACD + Super BB Strategy with Cheat Sheet & AI Insights
+Version: 3.4.2 - ADDED: MACD confirmation display
 """
 
 import logging
@@ -45,6 +45,7 @@ EMOJI = {
     "SOFT": "🟡",
     "TDI": "📈",
     "BB": "📊",
+    "MACD": "📊",
     "ZONE": "🎯",
     "CROSSOVER": "🔀",
     "SCORE": "🎯",
@@ -55,7 +56,6 @@ EMOJI = {
     "GRADE_A": "🏆",
     "GRADE_B": "🥈",
     "GRADE_C": "🥉",
-    # Super TDI + Super BB
     "DIVERGENCE": "↩️",
     "PATTERN": "🕯️",
     "S_R": "📊",
@@ -69,8 +69,8 @@ EMOJI = {
 
 class TelegramBot:
     """
-    Telegram bot for Super TDI + Super Bollinger Bands strategy.
-    Displays cheat sheet, conditions, and AI insights.
+    Telegram bot for Super TDI + MACD + Super Bollinger Bands strategy.
+    Displays cheat sheet, conditions, MACD confirmation, and AI insights.
     """
 
     def __init__(self):
@@ -93,10 +93,16 @@ class TelegramBot:
         self.SOFT_SELL = config.strategy.tdi_soft_sell if hasattr(config.strategy, 'tdi_soft_sell') else 65.0
         self.OVERBOUGHT = config.strategy.tdi_overbought if hasattr(config.strategy, 'tdi_overbought') else 75.0
 
-        # Grade thresholds
-        self.GRADE_A_THRESHOLD = getattr(config.strategy, 'grade_a_threshold', 82)
-        self.GRADE_B_THRESHOLD = getattr(config.strategy, 'grade_b_threshold', 70)
-        self.GRADE_C_THRESHOLD = getattr(config.strategy, 'grade_c_threshold', 60)
+        # MACD Settings
+        self.MACD_FAST = getattr(config.strategy, 'macd_fast', 12)
+        self.MACD_SLOW = getattr(config.strategy, 'macd_slow', 26)
+        self.MACD_SIGNAL = getattr(config.strategy, 'macd_signal', 9)
+        self.REQUIRE_MACD = getattr(config.strategy, 'require_macd_confirmation', True)
+
+        # Grade thresholds (lowered for more signals)
+        self.GRADE_A_THRESHOLD = getattr(config.strategy, 'grade_a_threshold', 80)
+        self.GRADE_B_THRESHOLD = getattr(config.strategy, 'grade_b_threshold', 60)
+        self.GRADE_C_THRESHOLD = getattr(config.strategy, 'grade_c_threshold', 50)
 
         self.HIGH_SCORE = self.GRADE_A_THRESHOLD
         self.MEDIUM_SCORE = self.GRADE_B_THRESHOLD
@@ -107,8 +113,9 @@ class TelegramBot:
         self._is_healthy = True
 
         if self.enabled:
-            logger.info(f"{EMOJI['SUCCESS']} TELEGRAM_BOT v3.4.0: Initialized with chat_id: {self.chat_id}")
-            logger.info(f"  Strategy: Super TDI + Super Bollinger Bands")
+            logger.info(f"{EMOJI['SUCCESS']} TELEGRAM_BOT v3.4.2: Initialized with chat_id: {self.chat_id}")
+            logger.info(f"  Strategy: Super TDI + MACD + Super Bollinger Bands")
+            logger.info(f"  MACD: Fast={self.MACD_FAST}, Slow={self.MACD_SLOW}, Signal={self.MACD_SIGNAL}")
             self._test_connection()
         else:
             logger.warning(f"{EMOJI['WARNING']} TELEGRAM_BOT: Disabled - No API token provided")
@@ -234,7 +241,7 @@ class TelegramBot:
         elif score >= self.GRADE_C_THRESHOLD: return "🟠"
         else: return "🔴"
 
-    # ========== SUPER TDI + SUPER BB HELPERS ==========
+    # ========== SUPER TDI + MACD + SUPER BB HELPERS ==========
 
     def _get_tdi_zone_emoji(self, tdi_level: float) -> str:
         if tdi_level <= self.OVERSOLD:
@@ -250,6 +257,22 @@ class TelegramBot:
         else:
             return "🔴 HARD SELL (2x risk)"
 
+    def _get_macd_status(self, signal_data: Dict[str, Any]) -> str:
+        """Get MACD status for display."""
+        macd_bullish = signal_data.get('macd_bullish', False)
+        macd_bearish = signal_data.get('macd_bearish', False)
+        macd_histogram = signal_data.get('macd_histogram', 0.0)
+        macd_above_signal = signal_data.get('macd_above_signal', False)
+
+        if macd_bullish:
+            return f"🟢 BULLISH (Hist: {macd_histogram:.4f})"
+        elif macd_bearish:
+            return f"🔴 BEARISH (Hist: {macd_histogram:.4f})"
+        elif macd_above_signal:
+            return f"🟡 BULLISH (below signal) (Hist: {macd_histogram:.4f})"
+        else:
+            return f"⚪ NEUTRAL (Hist: {macd_histogram:.4f})"
+
     def _format_conditions(self, signal_data: Dict[str, Any]) -> str:
         """Format the 5 conditions checklist."""
         conditions = [
@@ -260,7 +283,6 @@ class TelegramBot:
             ('reversal_confirm', "Price moving BACK inside band"),
         ]
 
-        # Get condition status from signal_data
         condition_keys = [
             'condition_1_tdi_zone',
             'condition_2_tdi_cross',
@@ -289,11 +311,14 @@ class TelegramBot:
         if cheat_sheet:
             return cheat_sheet
 
-        # Build cheat sheet if not provided
         direction = signal_data.get('direction', 'UNKNOWN')
         symbol = signal_data.get('symbol', 'UNKNOWN')
         tdi_level = signal_data.get('tdi_level', 50)
         tdi_zone = self._get_tdi_zone_emoji(tdi_level)
+
+        # MACD status
+        macd_status = self._get_macd_status(signal_data)
+        macd_required = self.REQUIRE_MACD
 
         lines = []
         lines.append(f"{'🟢' if direction == 'BUY' else '🔴'} <b>{direction} SIGNAL</b> - {symbol}")
@@ -306,16 +331,22 @@ class TelegramBot:
             lines.append(f"3. {'✅' if signal_data.get('condition_3_bb_touch', False) else '⬜'} Price {'touched' if signal_data.get('touch_lower', False) else 'near'} the LOWER Bollinger Band (Oversold)")
             lines.append(f"4. {'✅' if signal_data.get('condition_4_candles_shrinking', False) else '⬜'} Candles are getting SMALLER (People giving up)")
             lines.append(f"5. {'✅' if signal_data.get('condition_5_reversal_confirm', False) else '⬜'} Price started moving BACK inside the band (Reversal happening)")
+            lines.append(f"6. {'✅' if signal_data.get('macd_bullish', False) else ('❌' if macd_required else '⬜')} MACD is {'BULLISH ✅' if signal_data.get('macd_bullish', False) else ('NEUTRAL' if not macd_required else 'NOT BULLISH ❌')}")
             lines.append("")
-            lines.append("✅ ALL 5 HAPPEN = ENTER BUY TRADE")
+            lines.append(f"📊 MACD Status: {macd_status}")
+            lines.append("")
+            lines.append("✅ ALL 5 (plus MACD if required) = ENTER BUY TRADE")
         elif direction == 'SELL':
             lines.append(f"1. TDI says: \"{tdi_zone}\" (TDI: {tdi_level:.1f})")
             lines.append(f"2. {'✅' if signal_data.get('condition_2_tdi_cross', False) else '⬜'} Green line {'crossed BELOW' if signal_data.get('tdi_bearish_cross', False) else 'is BELOW'} Red line (Bears taking over)")
             lines.append(f"3. {'✅' if signal_data.get('condition_3_bb_touch', False) else '⬜'} Price {'touched' if signal_data.get('touch_upper', False) else 'near'} the UPPER Bollinger Band (Overbought)")
             lines.append(f"4. {'✅' if signal_data.get('condition_4_candles_shrinking', False) else '⬜'} Candles are getting SMALLER (People giving up)")
             lines.append(f"5. {'✅' if signal_data.get('condition_5_reversal_confirm', False) else '⬜'} Price started moving BACK inside the band (Reversal happening)")
+            lines.append(f"6. {'✅' if signal_data.get('macd_bearish', False) else ('❌' if macd_required else '⬜')} MACD is {'BEARISH ✅' if signal_data.get('macd_bearish', False) else ('NEUTRAL' if not macd_required else 'NOT BEARISH ❌')}")
             lines.append("")
-            lines.append("✅ ALL 5 HAPPEN = ENTER SELL TRADE")
+            lines.append(f"📊 MACD Status: {macd_status}")
+            lines.append("")
+            lines.append("✅ ALL 5 (plus MACD if required) = ENTER SELL TRADE")
 
         return "\n".join(lines)
 
@@ -354,11 +385,11 @@ class TelegramBot:
 
         return "\n📊 <b>Signal Features</b>\n" + "\n".join(f"• {f}" for f in features)
 
-    # ==================== SEND SIGNAL - SUPER TDI + SUPER BB ====================
+    # ==================== SEND SIGNAL - SUPER TDI + MACD + SUPER BB ====================
 
     def send_signal(self, **kwargs) -> bool:
         """
-        Send signal with Super TDI + Super BB cheat sheet and AI insights.
+        Send signal with Super TDI + MACD + Super BB cheat sheet and AI insights.
         """
         if not self.enabled: return False
         try:
@@ -378,6 +409,11 @@ class TelegramBot:
             risk_multiplier = kwargs.get('risk_multiplier', 1.0)
             conditions_met = kwargs.get('conditions_met', 0)
             conditions_total = kwargs.get('conditions_total', 5)
+
+            # MACD fields
+            macd_bullish = kwargs.get('macd_bullish', False)
+            macd_bearish = kwargs.get('macd_bearish', False)
+            macd_histogram = kwargs.get('macd_histogram', 0.0)
 
             total_score = kwargs.get('total_score', 0)
             grade = kwargs.get('grade', self._get_score_grade(total_score))
@@ -412,6 +448,11 @@ class TelegramBot:
             grade_emoji = self._get_grade_emoji(total_score)
             grade_display = f"{grade_emoji} Grade {grade}"
 
+            # MACD status
+            macd_status = self._get_macd_status(kwargs)
+            macd_emoji = "🟢" if macd_bullish else ("🔴" if macd_bearish else "⚪")
+            macd_required = self.REQUIRE_MACD
+
             # Signal emoji
             signal_emoji = "🟢" if signal_type == "BUY" else "🔴"
 
@@ -432,6 +473,11 @@ class TelegramBot:
 📈 <b>TDI Analysis</b>
 • Level: <b>{tdi_level:.1f}</b>
 • Zone: <b>{self._get_tdi_zone_emoji(tdi_level)}</b>
+
+📊 <b>MACD Analysis</b>
+• Status: <b>{macd_status}</b>
+• Required: <b>{'✅' if macd_required else '❌'} {macd_required}</b>
+• Histogram: <b>{macd_histogram:.4f}</b>
 
 💰 <b>Fee Impact</b>
 • Entry Fee: <code>${entry_fee:.4f}</code>
@@ -464,7 +510,7 @@ class TelegramBot:
 
     def send_result(self, **kwargs) -> bool:
         """
-        Send trade result with Super TDI + Super BB details.
+        Send trade result with Super TDI + MACD + Super BB details.
         """
         if not self.enabled: return False
         try:
@@ -619,17 +665,28 @@ class TelegramBot:
     def send_startup_message(self, symbols: List[str], config_info: Dict) -> bool:
         if not self.enabled: return False
         try:
-            message = f"""
-🚀 <b>Trading Bot Started</b> - Super TDI + Super BB v3.4.0
+            macd_fast = config_info.get('macd_settings', {}).get('fast', 12)
+            macd_slow = config_info.get('macd_settings', {}).get('slow', 26)
+            macd_signal = config_info.get('macd_settings', {}).get('signal', 9)
+            macd_required = config_info.get('macd_required', True)
 
-<b>Strategy</b>: Super TDI + Super Bollinger Bands
+            message = f"""
+🚀 <b>Trading Bot Started</b> - Super TDI + MACD + Super BB v3.4.2
+
+<b>Strategy</b>: Super TDI + MACD + Super Bollinger Bands
 <b>Environment</b>: {config_info.get('environment', 'production')}
 <b>Symbols</b>: {len(symbols)}
 <b>Timeframe</b>: {config_info.get('timeframe', '5m')}
-<b>LTF</b>: {config_info.get('ltf_timeframe', '1m')} | <b>HTF</b>: {config_info.get('htf_timeframe', '1h')}
+<b>LTF</b>: {config_info.get('ltf_timeframe', '1m')} | <b>HTF</b>: {config_info.get('htf_timeframe', '1h')} (Context Only)
 <b>AI</b>: {'✅' if config_info.get('ai_enabled', True) else '❌'}
 <b>Min Conditions</b>: {config_info.get('min_conditions', 3)}/5
 <b>RRR Range</b>: {config_info.get('rrr_range', '1.5-4.0')}
+
+<b>MACD Settings:</b>
+• Fast: {macd_fast}
+• Slow: {macd_slow}
+• Signal: {macd_signal}
+• Required: {'✅' if macd_required else '❌'}
 
 <b>Super TDI Levels:</b>
 • Hard Buy: ≤25 (2x risk)
@@ -659,7 +716,7 @@ Bot is now monitoring...
             avg_rrr = stats.get('avg_rrr', 0)
 
             message = f"""
-⚠️ <b>Trading Bot Stopped</b> - Super TDI + Super BB v3.4.0
+⚠️ <b>Trading Bot Stopped</b> - Super TDI + MACD + Super BB v3.4.2
 
 <b>Summary</b>
 • Signals: {signals}
@@ -681,7 +738,7 @@ Bot is now monitoring...
             signals = stats.get('signals_generated', 0)
 
             message = f"""
-💚 <b>Bot Heartbeat</b> - Super TDI + Super BB
+💚 <b>Bot Heartbeat</b> - Super TDI + MACD + Super BB
 Active: {active} | Signals: {signals} | PnL: ${pnl:.2f}
 """
             return self.send_message(message)
@@ -735,6 +792,37 @@ Active: {active} | Signals: {signals} | PnL: ${pnl:.2f}
             return self.send_message("\n".join(lines))
         except Exception as e:
             telegram_logger.error(f"Condition report error: {e}")
+            return False
+
+    def send_macd_report(self, symbol: str, macd_data: Dict) -> bool:
+        """Send MACD status report."""
+        if not self.enabled: return False
+        try:
+            macd = macd_data.get('macd', 0)
+            signal = macd_data.get('signal', 0)
+            histogram = macd_data.get('histogram', 0)
+            bullish = macd_data.get('bullish', False)
+            bearish = macd_data.get('bearish', False)
+            above_signal = macd_data.get('above_signal', False)
+
+            status = "🟢 BULLISH" if bullish else "🔴 BEARISH" if bearish else "⚪ NEUTRAL"
+
+            message = f"""
+📊 <b>MACD Report</b> - {symbol}
+
+• MACD Line: <b>{macd:.4f}</b>
+• Signal Line: <b>{signal:.4f}</b>
+• Histogram: <b>{histogram:.4f}</b>
+• Status: <b>{status}</b>
+• Above Signal: <b>{'✅' if above_signal else '❌'}</b>
+
+<b>Interpretation:</b>
+{f'🟢 MACD above Signal - BULLISH momentum' if above_signal else '🔴 MACD below Signal - BEARISH momentum'}
+{f'📈 Histogram rising - Momentum increasing' if histogram > 0 else '📉 Histogram falling - Momentum decreasing'}
+"""
+            return self.send_message(message)
+        except Exception as e:
+            telegram_logger.error(f"MACD report error: {e}")
             return False
 
 

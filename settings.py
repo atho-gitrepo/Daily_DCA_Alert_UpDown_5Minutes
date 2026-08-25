@@ -1,6 +1,6 @@
 """
 Configuration management for the AI Trading Bot.
-Version: 3.4.1 - ALIGNED: 1H Trend Following + Super TDI Strategy
+Version: 3.4.2 - ALIGNED: Super TDI + MACD + Super Bollinger Bands Strategy
 """
 
 import os
@@ -89,26 +89,38 @@ class BinanceConfig:
 class MarketConfig:
     quote_asset: str = "USDT"
     symbols: List[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
-    timeframe: str = "5m"
-    htf_timeframe: str = "1h"
-    ltf_timeframe: str = "1m"
+    timeframe: str = "5m"  # Super TDI + MACD + Super BB uses 5m for entries
+    htf_timeframe: str = "1h"  # Higher timeframe for context ONLY (not a filter)
+    ltf_timeframe: str = "1m"  # Ultra LTF for precise entry
     ultra_ltf_timeframe: str = "1m"
     ultra_htf_timeframe: str = "4h"
-    polling_interval_seconds: int = 15  # Changed from 30 to 15 for faster signal capture
+    polling_interval_seconds: int = 15  # 15 seconds for faster signal capture
 
 
 @dataclass
 class StrategyConfig:
-    """Super TDI + Super Bollinger Bands + 1H Trend Following Strategy Configuration."""
+    """
+    Super TDI + MACD + Super Bollinger Bands Strategy Configuration.
+    ALIGNED WITH YOUR MANUAL STRATEGY: RSI (TDI) primary + MACD secondary + BB entry
+    """
 
-    # ===== TDI Levels (Super TDI) =====
-    tdi_oversold: float = 25.0
-    tdi_soft_buy: float = 35.0
-    tdi_center_line: float = 50.0
-    tdi_soft_sell: float = 65.0
-    tdi_overbought: float = 75.0
+    # ===== TDI Levels (Super TDI = Your RSI) =====
+    tdi_oversold: float = 25.0      # Hard Buy Zone - 2x risk
+    tdi_soft_buy: float = 35.0      # Soft Buy Zone - 1x risk
+    tdi_center_line: float = 50.0   # No Trade Zone - Wait!
+    tdi_soft_sell: float = 65.0     # Soft Sell Zone - 1x risk
+    tdi_overbought: float = 75.0    # Hard Sell Zone - 2x risk
     tdi_no_trade_start: float = 50.0
     tdi_no_trade_end: float = 65.0
+    tdi_rsi_period: int = 10
+    tdi_fast_ma_period: int = 1
+    tdi_slow_ma_period: int = 5
+
+    # ===== MACD Settings (NEW - Your Secondary Indicator) =====
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    require_macd_confirmation: bool = True  # MACD confirmation required
 
     # ===== Bollinger Bands (Super BB) =====
     bb_period: int = 34
@@ -116,13 +128,15 @@ class StrategyConfig:
     bb_trend_period: int = 9
 
     # ===== Strategy Conditions =====
+    # Minimum conditions required (out of 5) for a signal
     min_conditions_for_signal: int = 3
+    # Strong signal requires at least 4 conditions
     strong_signal_min_conditions: int = 4
 
     # ===== Signal Strength =====
-    hard_signal_min_conditions: int = 4
-    soft_signal_min_conditions: int = 3
-    weak_signal_min_conditions: int = 2
+    hard_signal_min_conditions: int = 4  # HARD signal needs 4+ conditions
+    soft_signal_min_conditions: int = 3  # SOFT signal needs 3+ conditions
+    weak_signal_min_conditions: int = 2  # WEAK signal needs 2+ conditions
 
     # ===== Risk Multipliers =====
     hard_signal_risk_multiplier: float = 2.0
@@ -132,21 +146,21 @@ class StrategyConfig:
     # ===== ATR Risk =====
     atr_period: int = 14
     sl_multiplier: float = 1.5
-    tp_multiplier: float = 2.5
+    tp_multiplier: float = 2.5  # Default RRR for Super BB strategy
 
     # ===== Entry Protection =====
     max_entry_distance_atr: float = 0.25
 
     # ===== Grade Thresholds (LOWERED for more signals) =====
     grade_a_plus_threshold: int = 90
-    grade_a_threshold: int = 80
-    grade_b_plus_threshold: int = 72
-    grade_b_threshold: int = 60  # Changed from 70
-    grade_c_threshold: int = 50   # Changed from 60
+    grade_a_threshold: int = 80      # Changed from 82
+    grade_b_plus_threshold: int = 72 # Changed from 75
+    grade_b_threshold: int = 60      # Changed from 70
+    grade_c_threshold: int = 50      # Changed from 60
 
     # ===== Signal Lifecycle =====
     symbol_cooldown_minutes: int = 30
-    break_even_threshold_minutes: int = 480
+    break_even_threshold_minutes: int = 480  # 8 hours
     min_bars_before_check: int = 2
 
     # ===== Features =====
@@ -157,9 +171,10 @@ class StrategyConfig:
     enable_session_filtering: bool = True
     enable_volume_gate: bool = True
 
-    # ===== Multi-Timeframe Settings (NEW - Trend Following) =====
-    require_htf_alignment: bool = True
-    htf_trend_threshold: int = 2  # 2/3 MAs needed for alignment
+    # ===== Multi-Timeframe Settings =====
+    # HTF is for CONTEXT ONLY - NOT a filter for your strategy
+    require_htf_alignment: bool = False  # DISABLED - matches your manual strategy
+    htf_trend_threshold: int = 1
     htf_ma_periods: List[int] = field(default_factory=lambda: [7, 25, 99])
     require_ltf_confirmation: bool = True
     ltf_min_confirmation: float = 0.65
@@ -180,8 +195,8 @@ class StrategyConfig:
     fee_impact: float = 0.0011
 
     # ===== Signal Settings =====
-    min_quality_score: int = 50  # Changed from 70
-    min_signal_score: int = 60   # Changed from 70
+    min_quality_score: int = 50      # Changed from 70
+    min_signal_score: int = 60       # Changed from 70
     signal_cooldown_minutes: int = 30
     max_signals_per_cycle: int = 5
 
@@ -193,10 +208,10 @@ class StrategyConfig:
 
     # ===== Session Multipliers =====
     session_multipliers: Dict[str, float] = field(default_factory=lambda: {
-        "ASIAN": 0.7,
-        "LONDON": 1.0,
-        "NY": 1.2,
-        "LATE": 0.8,
+        "ASIAN": 0.7,      # Lower confidence in Asian session
+        "LONDON": 1.0,     # Normal
+        "NY": 1.2,         # Higher confidence during NY session
+        "LATE": 0.8,       # Lower confidence late session
     })
 
     # ===== PRODUCTION-SPECIFIC SETTINGS =====
@@ -208,6 +223,7 @@ class StrategyConfig:
 
 @dataclass
 class PerformanceConfig:
+    """Performance configuration."""
     cache_enabled: bool = True
     cache_ttl_seconds: int = 300
     cache_max_size: int = 1000
@@ -220,6 +236,7 @@ class PerformanceConfig:
 
 @dataclass
 class GroqConfig:
+    """Groq AI configuration."""
     api_key: str = ""
     model: str = "llama-3.3-70b-versatile"
     temperature: float = 0.3
@@ -228,6 +245,7 @@ class GroqConfig:
 
 @dataclass
 class TelegramConfig:
+    """Telegram configuration."""
     bot_token: str = ""
     chat_id: str = ""
     enabled: bool = False
@@ -235,6 +253,7 @@ class TelegramConfig:
 
 @dataclass
 class MongoDBConfig:
+    """MongoDB configuration."""
     uri: str = ""
     db_name: str = "trading_bot"
     active_collection: str = "active_signals"
@@ -269,6 +288,8 @@ class DeploymentConfig:
     debug: bool = False
     port: int = 8080
     host: str = "0.0.0.0"
+
+    # Production-specific
     use_sentry: bool = False
     sentry_dsn: str = ""
     log_level_production: str = "WARNING"
@@ -277,9 +298,9 @@ class DeploymentConfig:
 # ------------------- Main Config Class -------------------
 
 class Config:
-    """Complete configuration for Super TDI + 1H Trend Following strategy."""
+    """Complete configuration for Super TDI + MACD + Super BB strategy."""
 
-    VERSION = "3.4.1"
+    VERSION = "3.4.2"
 
     def __init__(self):
         self.binance = BinanceConfig()
@@ -296,32 +317,39 @@ class Config:
         self._validate()
         self._setup_directories()
 
+        # Log configuration mode
         run_mode = self.deployment.run_mode.value
         env = self.deployment.environment.value
 
         logger.info(f"Config initialized v{self.VERSION}")
         logger.info(f"  - Environment: {env}")
         logger.info(f"  - Run Mode: {run_mode}")
-        logger.info(f"  - Strategy: Super TDI + 1H Trend Following")
+        logger.info(f"  - Strategy: Super TDI + MACD + Super Bollinger Bands")
 
         if run_mode == "PRODUCTION":
             logger.info(f"🔴 PRODUCTION MODE ACTIVE - Using REAL funds!")
             logger.info(f"  - Position Size: {self.get_position_size_multiplier()*100:.0f}%")
             logger.info(f"  - Max Daily Trades: {self.strategy.max_daily_trades}")
             logger.info(f"  - Min Conditions Required: {self.strategy.min_conditions_for_signal}")
-            logger.info(f"  - HTF Alignment Required: {self.strategy.require_htf_alignment}")
+            logger.info(f"  - HTF Alignment Required: {self.strategy.require_htf_alignment} (DISABLED - Context only)")
 
-        logger.info(f"✅ Super TDI + 1H Trend Following Features:")
+        logger.info(f"✅ Super TDI + MACD + Super BB Features:")
         logger.info(f"  - TDI Levels: {self.strategy.tdi_oversold}/{self.strategy.tdi_soft_buy}/{self.strategy.tdi_center_line}/{self.strategy.tdi_soft_sell}/{self.strategy.tdi_overbought}")
+        logger.info(f"  - MACD: Fast={self.strategy.macd_fast}, Slow={self.strategy.macd_slow}, Signal={self.strategy.macd_signal}")
+        logger.info(f"  - MACD Required: {'✅' if self.strategy.require_macd_confirmation else '❌'}")
         logger.info(f"  - BB Period: {self.strategy.bb_period}, Deviation: {self.strategy.bb_deviation}")
         logger.info(f"  - Min Conditions: {self.strategy.min_conditions_for_signal}")
-        logger.info(f"  - HTF Trend Check: {self.strategy.require_htf_alignment}")
-        logger.info(f"  - HTF Threshold: {self.strategy.htf_trend_threshold}/3 MAs")
-        logger.info(f"  - Grade Threshold: B={self.strategy.grade_b_threshold}, C={self.strategy.grade_c_threshold}")
+        logger.info(f"  - Hard Signal: {self.strategy.hard_signal_min_conditions}+ conditions (2x risk)")
+        logger.info(f"  - Soft Signal: {self.strategy.soft_signal_min_conditions}+ conditions (1x risk)")
+        logger.info(f"  - Grade B Threshold: {self.strategy.grade_b_threshold}+")
+        logger.info(f"  - Grade C Threshold: {self.strategy.grade_c_threshold}+")
+        logger.info(f"  - Min Quality Score: {self.strategy.min_quality_score}")
         logger.info(f"  - Divergence: {self.strategy.enable_divergence}")
         logger.info(f"  - Candle Patterns: {self.strategy.enable_candle_patterns}")
         logger.info(f"  - S/R Levels: {self.strategy.enable_support_resistance}")
         logger.info(f"  - BB Squeeze: {self.strategy.enable_bb_squeeze}")
+        logger.info(f"  - Session Filtering: {self.strategy.enable_session_filtering}")
+        logger.info(f"  - HTF Trend Filter: ❌ DISABLED (Manual strategy - context only)")
 
     def _load_from_env(self):
         # ====== BINANCE ======
@@ -336,7 +364,7 @@ class Config:
         )
 
         # ====== MARKET ======
-        default_symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "AVAXUSDT", "DOTUSDT"]
+        default_symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "AVAXUSDT", "DOTUSDT", "ADAUSDT", "MATICUSDT"]
         self.market = MarketConfig(
             quote_asset=os.getenv("QUOTE_ASSET", "USDT"),
             symbols=safe_list_env("SYMBOLS", default_symbols),
@@ -361,6 +389,15 @@ class Config:
             tdi_overbought=safe_float_env("TDI_OVERBOUGHT", 75.0, min_val=65, max_val=85),
             tdi_no_trade_start=safe_float_env("TDI_NO_TRADE_START", 50.0, min_val=45, max_val=55),
             tdi_no_trade_end=safe_float_env("TDI_NO_TRADE_END", 65.0, min_val=55, max_val=75),
+            tdi_rsi_period=safe_int_env("TDI_RSI_PERIOD", 10, min_val=5, max_val=20),
+            tdi_fast_ma_period=safe_int_env("TDI_FAST_MA_PERIOD", 1, min_val=1, max_val=5),
+            tdi_slow_ma_period=safe_int_env("TDI_SLOW_MA_PERIOD", 5, min_val=3, max_val=10),
+
+            # MACD Settings (NEW)
+            macd_fast=safe_int_env("MACD_FAST", 12, min_val=5, max_val=20),
+            macd_slow=safe_int_env("MACD_SLOW", 26, min_val=15, max_val=40),
+            macd_signal=safe_int_env("MACD_SIGNAL", 9, min_val=5, max_val=15),
+            require_macd_confirmation=safe_bool_env("REQUIRE_MACD_CONFIRMATION", True),
 
             # Bollinger Bands
             bb_period=safe_int_env("BB_PERIOD", 34, min_val=10, max_val=50),
@@ -409,9 +446,9 @@ class Config:
             enable_session_filtering=safe_bool_env("ENABLE_SESSION_FILTERING", True),
             enable_volume_gate=safe_bool_env("ENABLE_VOLUME_GATE", True),
 
-            # Multi-Timeframe (NEW - Trend Following)
-            require_htf_alignment=safe_bool_env("REQUIRE_HTF_ALIGNMENT", True),
-            htf_trend_threshold=safe_int_env("HTF_TREND_THRESHOLD", 2, min_val=1, max_val=3),
+            # Multi-Timeframe (HTF = Context ONLY, NOT a filter)
+            require_htf_alignment=safe_bool_env("REQUIRE_HTF_ALIGNMENT", False),  # DISABLED
+            htf_trend_threshold=safe_int_env("HTF_TREND_THRESHOLD", 1, min_val=1, max_val=3),
             require_ltf_confirmation=safe_bool_env("REQUIRE_LTF_CONFIRMATION", True),
             ltf_min_confirmation=safe_float_env("LTF_MIN_CONFIRMATION", 0.65, min_val=0.4, max_val=0.9),
 
@@ -522,6 +559,7 @@ class Config:
         )
 
     def _load_mongodb_config(self) -> MongoDBConfig:
+        """Load MongoDB configuration from environment variables."""
         mongodb_uri = os.getenv("MONGODB_URI", os.getenv("MONGODB_URL", ""))
 
         if not mongodb_uri:
@@ -562,6 +600,7 @@ class Config:
         )
 
     def _validate(self):
+        """Validate configuration."""
         errors = []
         warnings = []
 
@@ -582,15 +621,27 @@ class Config:
         if self.strategy.grade_c_threshold >= self.strategy.grade_b_threshold:
             warnings.append(f"GRADE_C_THRESHOLD ({self.strategy.grade_c_threshold}) should be below GRADE_B_THRESHOLD ({self.strategy.grade_b_threshold})")
 
+        # Validate MACD settings
+        if self.strategy.macd_slow <= self.strategy.macd_fast:
+            warnings.append(f"MACD_SLOW ({self.strategy.macd_slow}) should be greater than MACD_FAST ({self.strategy.macd_fast})")
+
         if self.strategy.min_rrr < 1.0:
             warnings.append(f"MIN_RRR ({self.strategy.min_rrr}) below 1.0")
 
+        # Validate strategy conditions
         if self.strategy.min_conditions_for_signal < 2:
             warnings.append(f"MIN_CONDITIONS_FOR_SIGNAL ({self.strategy.min_conditions_for_signal}) is below 2 (recommended 3)")
+        if self.strategy.min_conditions_for_signal > 4:
+            warnings.append(f"MIN_CONDITIONS_FOR_SIGNAL ({self.strategy.min_conditions_for_signal}) is high (may miss signals)")
 
+        # Production-specific validation
         if self.deployment.run_mode == RunMode.PRODUCTION:
             if self.strategy.risk_per_trade_percent > 2.0:
                 warnings.append(f"RISK_PER_TRADE_PERCENT ({self.strategy.risk_per_trade_percent}%) is high for production (recommended <2%)")
+
+        # HTF alignment warning - DISABLED for manual strategy
+        if self.strategy.require_htf_alignment:
+            warnings.append("HTF alignment is ENABLED but your manual strategy doesn't use it. Set REQUIRE_HTF_ALIGNMENT=false")
 
         for warning in warnings:
             logger.warning(f"Configuration warning: {warning}")
@@ -621,11 +672,13 @@ class Config:
         return self.deployment.run_mode == RunMode.PRODUCTION
 
     def get_position_size_multiplier(self) -> float:
+        """Get position size multiplier based on run mode."""
         if self.is_production_mode():
             return self.strategy.production_position_size_multiplier
         return 1.0
 
     def get_grade(self, score: int) -> str:
+        """Get grade based on thresholds."""
         if score >= self.strategy.grade_a_plus_threshold:
             return "A+"
         elif score >= self.strategy.grade_a_threshold:
@@ -638,6 +691,15 @@ class Config:
             return "C"
         else:
             return "D"
+
+    def get_macd_settings(self) -> Dict[str, int]:
+        """Get MACD settings."""
+        return {
+            'fast': self.strategy.macd_fast,
+            'slow': self.strategy.macd_slow,
+            'signal': self.strategy.macd_signal,
+            'required': self.strategy.require_macd_confirmation,
+        }
 
 
 # ------------------- Singleton Instance -------------------

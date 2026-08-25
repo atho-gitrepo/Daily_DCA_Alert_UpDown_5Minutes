@@ -1,7 +1,7 @@
 """
-Market data fetcher for Binance cryptocurrency exchange - SUPER TDI + SUPER BB STRATEGY.
-Simplified for Super TDI + Super Bollinger Bands strategy with multi-timeframe support.
-Version: 3.4.0 - ALIGNED: Super TDI + Super BB strategy
+Market data fetcher for Binance cryptocurrency exchange - SUPER TDI + MACD + SUPER BB STRATEGY.
+Simplified for Super TDI + MACD + Super Bollinger Bands strategy with multi-timeframe support.
+Version: 3.4.2 - ADDED: MACD data support and improved caching
 """
 
 import pandas as pd
@@ -46,6 +46,7 @@ EMOJI = {
     "LTF": "⏱️",
     "VERSION": "📌",
     "DB": "💾",
+    "MACD": "📊",
 }
 
 # Binance imports - try both new and old
@@ -165,14 +166,14 @@ class CacheManager:
 class DataFetcher:
     """
     Handles connection to Binance and fetches market data.
-    Simplified for Super TDI + Super Bollinger Bands strategy.
+    Simplified for Super TDI + MACD + Super Bollinger Bands strategy.
     """
 
     # Required columns
     REQUIRED_COLUMNS = ['open', 'high', 'low', 'close', 'volume']
 
     # Version
-    CACHE_VERSION = "3.4.0"
+    CACHE_VERSION = "3.4.2"
 
     def __init__(self, demo_mode: Optional[bool] = None):
         data_logger.info(f"{EMOJI['START']} DATA_INIT: Starting DataFetcher v{self.CACHE_VERSION}")
@@ -190,6 +191,11 @@ class DataFetcher:
             self.demo_mode = config.is_demo() if hasattr(config, 'is_demo') else True
 
         self.is_production_mode = is_production_mode and not self.demo_mode
+
+        # MACD Settings (for reference)
+        self.macd_fast = getattr(config.strategy, 'macd_fast', 12)
+        self.macd_slow = getattr(config.strategy, 'macd_slow', 26)
+        self.macd_signal = getattr(config.strategy, 'macd_signal', 9)
 
         # Initialize cache
         self.cache = CacheManager(
@@ -214,10 +220,16 @@ class DataFetcher:
             "demo_mode": self.demo_mode,
             "production_mode": self.is_production_mode,
             "version": self.CACHE_VERSION,
+            "macd_settings": {
+                "fast": self.macd_fast,
+                "slow": self.macd_slow,
+                "signal": self.macd_signal,
+            }
         }
 
         mode_label = "🔴 PRODUCTION" if self.is_production_mode else "🎮 DEMO"
         data_logger.info(f"{EMOJI['SUCCESS']} DATA_INIT: DataFetcher ready ({mode_label})")
+        data_logger.info(f"{EMOJI['MACD']} DATA_INIT: MACD settings: Fast={self.macd_fast}, Slow={self.macd_slow}, Signal={self.macd_signal}")
 
     def _init_binance_client(self):
         """Initialize Binance client."""
@@ -419,7 +431,7 @@ class DataFetcher:
         return None
 
     def _fetch_demo_klines(self, symbol: str, interval: str, limit: int) -> Optional[pd.DataFrame]:
-        """Generate synthetic demo data."""
+        """Generate synthetic demo data with realistic patterns."""
         if self.is_production_mode:
             data_logger.error(f"{EMOJI['PRODUCTION']} DATA_DEMO: DEMO data requested in PRODUCTION mode!")
             return None
@@ -436,11 +448,19 @@ class DataFetcher:
                 freq=f"{interval_minutes}min"
             )
 
-            # Generate price data
+            # Generate realistic price data with trends and cycles
             returns = np.random.normal(0.0002, 0.01, limit)
-            if np.random.random() > 0.6:
+
+            # Add trend (50% chance of uptrend or downtrend)
+            if np.random.random() > 0.5:
                 trend = np.random.uniform(0.001, 0.003) * np.random.choice([-1, 1])
                 returns += trend * np.linspace(0, 1, limit)
+
+            # Add cycles (sine wave pattern)
+            cycle_amplitude = np.random.uniform(0.002, 0.008)
+            cycle_frequency = np.random.uniform(0.05, 0.2)
+            cycle = cycle_amplitude * np.sin(np.linspace(0, cycle_frequency * 2 * np.pi, limit))
+            returns += cycle
 
             price = base_price * np.exp(np.cumsum(returns))
             volatility = 0.015 * (1 + 0.5 * np.random.random())
@@ -529,6 +549,8 @@ class DataFetcher:
             'FILUSDT': 5.0,
             'ATOMUSDT': 10.0,
             'VETUSDT': 0.02,
+            'MATICUSDT': 0.60,
+            'LINKUSDT': 15.0,
         }
         return base_prices.get(symbol, 100.0)
 
@@ -571,6 +593,22 @@ class DataFetcher:
 
         return results
 
+    def fetch_with_macd_data(self, symbol: str, interval: str = '5m',
+                              limit: int = 200) -> Optional[pd.DataFrame]:
+        """
+        Fetch klines and ensure MACD data is available.
+        This is a convenience method that fetches data and returns it ready for MACD calculation.
+        """
+        df = self.fetch_klines(symbol, interval, limit, heikin_ashi=True)
+        if df is None or df.empty:
+            return None
+
+        # Ensure we have enough data for MACD calculation
+        if len(df) < self.macd_slow:
+            data_logger.warning(f"{EMOJI['WARNING']} DATA_FETCH: Not enough data for MACD ({len(df)} < {self.macd_slow})")
+
+        return df
+
     def get_current_price(self, symbol: str) -> Optional[float]:
         """Get current price."""
         if self._is_demo_mode() or not (self.client or self.um_client):
@@ -594,6 +632,14 @@ class DataFetcher:
         variation = 1 + np.random.normal(0, 0.001)
         return base_price * variation
 
+    def get_macd_settings(self) -> Dict[str, int]:
+        """Get MACD settings."""
+        return {
+            'fast': self.macd_fast,
+            'slow': self.macd_slow,
+            'signal': self.macd_signal,
+        }
+
     def get_metrics(self) -> Dict[str, Any]:
         """Get metrics."""
         return {
@@ -602,6 +648,7 @@ class DataFetcher:
             "demo_mode": self.demo_mode,
             "production_mode": self.is_production_mode,
             "client_connected": self.client is not None or self.um_client is not None,
+            "macd_settings": self.get_macd_settings(),
         }
 
     def cleanup(self):
