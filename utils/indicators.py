@@ -312,6 +312,11 @@ class Indicators:
         return calculate_tdi(df)
 
     @staticmethod
+    def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
+        """Alias for calculate_all() for backward compatibility."""
+        return calculate_all_indicators(df)
+
+    @staticmethod
     def calculate_macd(df: pd.DataFrame) -> pd.DataFrame:
         return calculate_macd(df)
 
