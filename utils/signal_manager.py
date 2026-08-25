@@ -1,7 +1,7 @@
 """
 Signal Manager - Handles signal lifecycle, debouncing, and duplicate prevention
 ALIGNED: Super TDI + Super Bollinger Bands Strategy with 1-Hour Holds
-Version: 3.4.0 - UPDATED: 1-hour exit logic for day trading
+Version: 3.4.1 - FIXED: Lower grade thresholds for more signals
 """
 
 import logging
@@ -30,10 +30,8 @@ EMOJI = {
     "CONFLICT": "⚔️", "ACTIVE": "🟢", "RESOLVED": "✅", "SCORE": "🎯",
     "COMPONENT": "📊", "GRADE_A": "🏆", "GRADE_B": "🥈", "GRADE_C": "🥉",
     "APPROVED": "✅", "DB": "💾", "MONGODB": "🍃",
-    # v3.4.0
     "DIVERGENCE": "↩️", "PATTERN": "🕯️", "S_R": "📊", "SESSION": "🌍",
     "STRUCTURE": "🏗️", "REGIME": "📈", "STATE": "🔄",
-    # Super TDI + BB
     "TDI": "📈", "BB": "📊", "CANDLE": "🕯️", "CHEAT": "📋",
     "AI": "🤖", "APPROVE": "✅", "REJECT": "🚫", "EXIT": "⏰",
 }
@@ -151,7 +149,6 @@ class SignalData:
             "pnl": self.pnl,
             "pnl_percent": self.pnl_percent,
             "fees": self.fees,
-            # Super TDI
             "tdi_level": self.tdi_level,
             "tdi_zone": self.tdi_zone,
             "tdi_zone_description": self.tdi_zone_description,
@@ -159,14 +156,12 @@ class SignalData:
             "tdi_slow": self.tdi_slow,
             "tdi_bullish_cross": self.tdi_bullish_cross,
             "tdi_bearish_cross": self.tdi_bearish_cross,
-            # Super BB
             "bb_position": self.bb_position,
             "bb_touch_lower": self.bb_touch_lower,
             "bb_touch_upper": self.bb_touch_upper,
             "bb_candles_shrinking": self.bb_candles_shrinking,
             "bb_reversal_confirm": self.bb_reversal_confirm,
             "bb_squeeze": self.bb_squeeze,
-            # Conditions
             "conditions_met": self.conditions_met,
             "condition_1_tdi_zone": self.condition_1_tdi_zone,
             "condition_2_tdi_cross": self.condition_2_tdi_cross,
@@ -174,20 +169,17 @@ class SignalData:
             "condition_4_candles_shrinking": self.condition_4_candles_shrinking,
             "condition_5_reversal_confirm": self.condition_5_reversal_confirm,
             "cheat_sheet": self.cheat_sheet[:500] if self.cheat_sheet else "",
-            # AI
             "ai_decision": self.ai_decision,
             "ai_confidence": self.ai_confidence,
             "ai_reasoning": self.ai_reasoning[:200] if self.ai_reasoning else "",
             "ai_validated": self.ai_validated,
             "ai_response_time_ms": self.ai_response_time_ms,
-            # Risk
             "rrr": self.rrr,
             "signal_strength": self.signal_strength,
             "risk_multiplier": self.risk_multiplier,
             "quality_score": self.quality_score,
             "total_score": self.total_score,
             "grade": self.grade,
-            # Features
             "divergence_detected": self.divergence_detected,
             "divergence_type": self.divergence_type,
             "candle_pattern": self.candle_pattern,
@@ -295,21 +287,23 @@ class SignalManager:
         self.MIN_BARS_BEFORE_CHECK = 3      # 3 bars (15 min) before checking
         self.MIN_SIGNAL_AGE_SECONDS = 300   # 5 minutes minimum hold
 
-        # Grade thresholds
+        # === FIXED: Lower Grade Thresholds for More Signals ===
         self.GRADE_A_PLUS_THRESHOLD = 90
-        self.GRADE_A_THRESHOLD = 82
-        self.GRADE_B_PLUS_THRESHOLD = 75
-        self.GRADE_B_THRESHOLD = 70
-        self.GRADE_C_THRESHOLD = 60
+        self.GRADE_A_THRESHOLD = 80          # Changed from 82
+        self.GRADE_B_PLUS_THRESHOLD = 72     # Changed from 75
+        self.GRADE_B_THRESHOLD = 60          # Changed from 70
+        self.GRADE_C_THRESHOLD = 50          # Changed from 60
 
-        self.MIN_SIGNAL_SCORE = 70
+        # === FIXED: Lower Minimum Signal Score ===
+        self.MIN_SIGNAL_SCORE = 50           # Changed from 70
+
         self._signal_cache: Dict[str, Tuple[datetime, str]] = {}
         self._signal_cache_ttl = 600
 
         self.db_client = db_client
         self.db_enabled = self.db_client is not None and self.db_client.is_available() if self.db_client is not None else False
 
-        logger.info(f"✅ SIGNAL_MANAGER v3.4.0: Initialized")
+        logger.info(f"✅ SIGNAL_MANAGER v3.4.1: Initialized")
         logger.info(f"  - Strategy: Super TDI + Super Bollinger Bands")
         logger.info(f"  - Max Hold: {self.MAX_HOLD_MINUTES} minutes (1 hour)")
         logger.info(f"  - Min Hold: {self.MIN_HOLD_MINUTES} minutes")
@@ -318,9 +312,11 @@ class SignalManager:
         logger.info(f"  - Grade A: {self.GRADE_A_THRESHOLD}+")
         logger.info(f"  - Grade B+: {self.GRADE_B_PLUS_THRESHOLD}+")
         logger.info(f"  - Grade B: {self.GRADE_B_THRESHOLD}+")
+        logger.info(f"  - Grade C: {self.GRADE_C_THRESHOLD}+")
         logger.info(f"  - Min Signal Score: {self.MIN_SIGNAL_SCORE}")
 
     def _get_grade(self, score: int) -> str:
+        """Get grade based on score - FIXED to accept more signals."""
         if score >= self.GRADE_A_PLUS_THRESHOLD:
             return "A+"
         elif score >= self.GRADE_A_THRESHOLD:
@@ -348,19 +344,31 @@ class SignalManager:
         """Lock a symbol with a new signal (Super TDI + Super BB strategy)."""
         try:
             total_score = raw_data.get('total_score', 0)
+            # If total_score not set, use quality_score
+            if total_score == 0:
+                total_score = raw_data.get('quality_score', 0)
+
             grade = self._get_grade(total_score)
 
             # Extract strategy-specific fields
             conditions_met = raw_data.get('conditions_met', 0)
             conditions_total = raw_data.get('conditions_total', 5)
 
-            # Check if signal passes minimum conditions
+            # === FIXED: More lenient condition check ===
+            # Allow signals with 3+ conditions (was rejecting < 3)
             if conditions_met < 3:
                 logger.warning(f"{EMOJI['REJECT']} Only {conditions_met}/{conditions_total} conditions met for {symbol}")
                 return False
 
-            if grade in ["C", "D"]:
-                logger.warning(f"{EMOJI['REJECT']} Grade {grade} signal rejected for {symbol}")
+            # === FIXED: Accept C grade signals (was rejecting C and D) ===
+            # Only reject D grade (below 50)
+            if grade == "D":
+                logger.warning(f"{EMOJI['REJECT']} Grade {grade} signal rejected for {symbol} (score: {total_score})")
+                return False
+
+            # === FIXED: Accept signals with score >= 50 ===
+            if total_score < self.MIN_SIGNAL_SCORE:
+                logger.warning(f"{EMOJI['REJECT']} Score {total_score} below minimum {self.MIN_SIGNAL_SCORE} for {symbol}")
                 return False
 
             allowed, reason = self._check_allowed(symbol, signal_type, entry_price, total_score)
@@ -463,7 +471,7 @@ class SignalManager:
             logger.info(
                 f"{EMOJI['LOCK']} SIGNAL_LOCK: {signal_type} {symbol} "
                 f"@ {entry_price:.4f} | Conditions: {conditions_met}/{conditions_total} | "
-                f"Grade: {grade} | AI: {signal.ai_decision} | "
+                f"Grade: {grade} | Score: {total_score} | AI: {signal.ai_decision} | "
                 f"Features: {signal.get_feature_summary()}"
             )
             return True
@@ -545,7 +553,6 @@ class SignalManager:
         age_minutes = age_seconds / 60
 
         # ===== RULE 1: MINIMUM HOLD TIME =====
-        # Don't check TP/SL until minimum hold time has passed
         if signal.bar_count < signal.min_bars_before_check:
             return "ACTIVE", current_price - signal.entry_price, signal
         if age_seconds < signal.min_age_seconds_before_check:
@@ -664,6 +671,7 @@ class SignalManager:
                 "a": sum(1 for s in self.active_signals.values() if s.grade == "A"),
                 "b_plus": sum(1 for s in self.active_signals.values() if s.grade == "B+"),
                 "b": sum(1 for s in self.active_signals.values() if s.grade == "B"),
+                "c": sum(1 for s in self.active_signals.values() if s.grade == "C"),
             },
             "conditions_summary": {
                 "avg_conditions_met": total_conditions / max(1, active_count),
@@ -681,7 +689,7 @@ class SignalManager:
                 "break_even_minutes": self.BREAK_EVEN_THRESHOLD_MINUTES,
                 "min_bars_check": self.MIN_BARS_BEFORE_CHECK,
             },
-            "version": "3.4.0"
+            "version": "3.4.1"
         }
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI Trading Bot v3.4.0 - Main Entry Point
-SUPER TDI + SUPER BOLLINGER BANDS STRATEGY
+AI Trading Bot v3.4.1 - Main Entry Point
+Super TDI + Super Bollinger Bands + 1H Trend Following Strategy
 """
 
 import os
@@ -41,7 +41,7 @@ from utils.signal_manager import signal_manager
 # Telegram
 from utils.telegram_bot import telegram_bot
 
-# Strategy - Super TDI + Super Bollinger Bands
+# Strategy - Super TDI + Super Bollinger Bands + HTF Trend Following
 from strategy.signal_engine import SignalEngine
 from strategy.ai_analyzer import ai_analyzer
 from strategy.cheat_sheet import SignalCheatSheet
@@ -87,8 +87,8 @@ bot_stats = {
     },
     'total_pnl': 0.0,
     'errors': 0,
-    'version': '3.4.0',
-    'strategy': 'Super TDI + Super Bollinger Bands',
+    'version': '3.4.1',
+    'strategy': 'Super TDI + Super Bollinger Bands + 1H Trend Following',
     'ai_enabled': ai_analyzer.enabled if ai_analyzer else False,
     'mongodb_enabled': mongodb_client.is_available() if mongodb_client else False,
     'features': {
@@ -102,6 +102,7 @@ bot_stats = {
         'bb_squeeze': getattr(config.strategy, 'enable_bb_squeeze', True),
         'session_filtering': getattr(config.strategy, 'enable_session_filtering', True),
         'ai_validation': ai_analyzer.enabled if ai_analyzer else False,
+        'htf_trend_alignment': getattr(config.strategy, 'require_htf_alignment', True),
     },
 }
 
@@ -202,7 +203,7 @@ def check_conditions(signal_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
-    """Process a single symbol using Super TDI + Super BB strategy."""
+    """Process a single symbol using Super TDI + Super BB + HTF Trend strategy."""
 
     if signal_manager is None:
         logger.warning(f"{EMOJI['WARNING']} Signal manager not available for {symbol}")
@@ -213,16 +214,22 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
         if signal_manager.is_symbol_locked(symbol):
             return None
 
-        # Fetch data
+        # Fetch LTF data (5m)
         df = fetch_data(symbol, config.market.timeframe)
         if df is None:
             return None
 
+        # Fetch HTF data (1h) for trend alignment
+        htf_df = fetch_data(symbol, config.market.htf_timeframe)
+        if htf_df is None:
+            logger.debug(f"{symbol}: No HTF data available, continuing without trend filter")
+            htf_df = None
+
         # Create signal engine (use AI if enabled)
         signal_engine = SignalEngine(use_ai=ai_analyzer.enabled if ai_analyzer else False)
 
-        # Process signal
-        signal = signal_engine.process(df, symbol)
+        # Process signal with HTF data
+        signal = signal_engine.process(df, symbol, htf_df=htf_df)
 
         if signal is None or signal.get('signal') == 'NO_TRADE':
             return None
@@ -309,6 +316,8 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                                 cheat_sheet=signal.get('cheat_sheet', ''),
                                 # Hold info
                                 max_hold_minutes=60,
+                                # HTF Trend Info
+                                htf_aligned=signal.get('htf_aligned', True),
                             )
                         except Exception as e:
                             logger.warning(f"Telegram error for {symbol}: {e}")
@@ -322,7 +331,7 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                             print(f"\n🤖 AI Decision: {ai_decision} (Confidence: {signal.get('ai_confidence', 0.8)*100:.0f}%)")
                         print("=" * 70 + "\n")
 
-                    logger.info(f"{EMOJI['SIGNAL']} {signal.get('direction')} {symbol} @ {signal.get('entry_price', 0):.4f} | Conditions: {condition_check['conditions_met']}/{condition_check['conditions_total']} | AI: {ai_decision} | Max Hold: 60min")
+                    logger.info(f"{EMOJI['SIGNAL']} {signal.get('direction')} {symbol} @ {signal.get('entry_price', 0):.4f} | Conditions: {condition_check['conditions_met']}/{condition_check['conditions_total']} | AI: {ai_decision} | Grade: {signal.get('grade', 'C')} | Score: {signal.get('quality_score', 0)}")
                     return signal
 
             elif ai_decision == 'REJECT':
@@ -384,7 +393,6 @@ def check_active_signals():
                 # Send Telegram result
                 if telegram_bot is not None and telegram_bot.enabled:
                     try:
-                        # Map status to emoji
                         status_emoji = "💰" if status == "PROFIT" else "💸" if status == "LOSS" else "⚖️" if status == "BREAK_EVEN" else "⏰"
 
                         telegram_bot.send_result(
@@ -432,8 +440,8 @@ def run_health_server():
                 self.end_headers()
                 status_data = {
                     'status': 'running' if running else 'stopped',
-                    'version': '3.4.0',
-                    'strategy': 'Super TDI + Super Bollinger Bands',
+                    'version': '3.4.1',
+                    'strategy': 'Super TDI + Super Bollinger Bands + 1H Trend Following',
                     'timestamp': datetime.now().isoformat(),
                     'stats': bot_stats,
                     'active_signals': len(signal_manager.active_signals) if signal_manager else 0,
@@ -473,13 +481,14 @@ def main():
     global running
 
     logger.info("=" * 70)
-    logger.info(f"{EMOJI['START']} AI TRADING BOT v3.4.0")
-    logger.info("📊 SUPER TDI + SUPER BOLLINGER BANDS STRATEGY")
+    logger.info(f"{EMOJI['START']} AI TRADING BOT v3.4.1")
+    logger.info("📊 SUPER TDI + SUPER BOLLINGER BANDS + 1H TREND FOLLOWING")
     logger.info("=" * 70)
     logger.info("📋 Strategy Features:")
     logger.info("  - Super TDI Zones (25/35/50/65/75)")
     logger.info("  - Super Bollinger Bands (34 period, 1.75 dev)")
     logger.info("  - 5-Step Entry Checklist")
+    logger.info("  - 1H Trend Following (MA7/25/99)")
     logger.info("  - Cheat Sheet Explanations")
     logger.info("  - Divergence Detection")
     logger.info("  - Candle Pattern Recognition")
@@ -500,7 +509,9 @@ def main():
     logger.info(f"📋 HTF: {config.market.htf_timeframe}")
     logger.info(f"🎯 Run Mode: {config.deployment.run_mode.value if hasattr(config.deployment, 'run_mode') else 'UNKNOWN'}")
     min_conditions = getattr(config.strategy, 'min_conditions_for_signal', 3)
+    htf_required = getattr(config.strategy, 'require_htf_alignment', True)
     logger.info(f"📊 Min Conditions: {min_conditions}/5")
+    logger.info(f"📊 HTF Alignment Required: {'✅' if htf_required else '❌'}")
     logger.info("=" * 70)
 
     # Setup signal handlers
@@ -531,6 +542,7 @@ def main():
                 'bb_period': getattr(config.strategy, 'bb_period', 34),
                 'bb_deviation': getattr(config.strategy, 'bb_deviation', 1.75),
                 'max_hold_minutes': 60,
+                'htf_alignment_required': htf_required,
             }
         )
 
@@ -568,7 +580,7 @@ def main():
 
             # Sleep
             elapsed = time.time() - start_time
-            polling_interval = getattr(config.market, 'polling_interval_seconds', 30)
+            polling_interval = getattr(config.market, 'polling_interval_seconds', 15)
             sleep_time = max(0, polling_interval - elapsed)
             if sleep_time > 0:
                 time.sleep(sleep_time)

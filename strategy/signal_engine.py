@@ -1,6 +1,6 @@
 """
-Signal Engine - Super TDI + Super Bollinger Bands with AI
-Version: 3.4.0 - FULLY FUNCTIONAL
+Signal Engine - Super TDI + Super Bollinger Bands with AI + HTF Trend Following
+Version: 3.4.1 - ADDED: 1H Trend Filter for alignment
 """
 
 import pandas as pd
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 class SignalEngine:
     """
     Signal Engine combining Super TDI and Super Bollinger Bands with AI validation.
+    NOW WITH 1H TREND FOLLOWING FILTER.
 
     Strategy Rules (5 Conditions):
     1. TDI in buyer/seller zone
@@ -30,7 +31,11 @@ class SignalEngine:
     4. Candles getting smaller (momentum loss)
     5. Price moving back inside band (reversal)
 
-    ALL 5 = ENTER TRADE
+    ADDED: 1H Trend Alignment
+    - BUY: Only when 1H trend is BULLISH (price above MA7/MA25/MA99)
+    - SELL: Only when 1H trend is BEARISH (price below MA7/MA25/MA99)
+
+    ALL 5 + HTF Alignment = ENTER TRADE
     """
 
     def __init__(self, use_ai: bool = True):
@@ -47,6 +52,11 @@ class SignalEngine:
         # Check if AI should be used
         self.use_ai = use_ai and ai_analyzer.enabled if ai_analyzer else False
 
+        # HTF Trend Following Settings
+        self.require_htf_alignment = getattr(config.strategy, 'require_htf_alignment', True)
+        self.htf_threshold = getattr(config.strategy, 'htf_trend_threshold', 2)
+        self.htf_ma_periods = getattr(config.strategy, 'htf_ma_periods', [7, 25, 99])
+
         self.last_signal = None
         self.last_signal_time = None
 
@@ -55,13 +65,27 @@ class SignalEngine:
         self.default_rrr = getattr(config.strategy, 'default_rrr', 2.0)
         self.max_rrr = getattr(config.strategy, 'max_rrr', 4.0)
 
-        logger.info(f"🔧 Signal Engine initialized - AI: {'✅' if self.use_ai else '❌'}")
+        # Grade thresholds (lowered for more signals)
+        self.grade_a_threshold = getattr(config.strategy, 'grade_a_threshold', 80)
+        self.grade_b_threshold = getattr(config.strategy, 'grade_b_threshold', 60)
+        self.grade_c_threshold = getattr(config.strategy, 'grade_c_threshold', 50)
+        self.min_quality_score = getattr(config.strategy, 'min_quality_score', 50)
+
+        logger.info(f"🔧 Signal Engine v3.4.1 initialized - AI: {'✅' if self.use_ai else '❌'}")
         logger.info(f"   RRR Range: {self.min_rrr} - {self.max_rrr}")
         logger.info(f"   Default RRR: {self.default_rrr}")
+        logger.info(f"   HTF Alignment Required: {self.require_htf_alignment}")
+        logger.info(f"   HTF Threshold: {self.htf_threshold}/3 MAs")
+        logger.info(f"   Min Quality Score: {self.min_quality_score}")
 
-    def process(self, df: pd.DataFrame, symbol: str = "UNKNOWN") -> Dict[str, Any]:
+    def process(self, df: pd.DataFrame, symbol: str = "UNKNOWN", htf_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
         """
-        Process data and generate signals with AI validation.
+        Process data and generate signals with AI validation and HTF trend filter.
+
+        Args:
+            df: LTF data (5m)
+            symbol: Trading symbol
+            htf_df: HTF data (1h) for trend alignment
 
         Returns:
             {
@@ -83,6 +107,9 @@ class SignalEngine:
                 'reasons': list,
                 'timestamp': str,
                 'ai_analysis': dict,
+                'htf_aligned': bool,
+                'htf_trend': str,
+                'htf_score': int,
             }
         """
         if df is None or df.empty:
@@ -117,32 +144,137 @@ class SignalEngine:
         # Log SELL conditions
         logger.debug(f"📊 {symbol} SELL Conditions: {sell_ok} - {sell_reason if sell_reason else 'N/A'}")
 
-        # ========== STEP 5: GENERATE SIGNAL ==========
+        # ========== STEP 5: CHECK HTF TREND ALIGNMENT ==========
+        htf_trend, htf_score, htf_aligned = self._check_htf_trend(htf_df, "BUY" if buy_ok else "SELL" if sell_ok else "NONE")
+
+        # Log HTF alignment
+        if htf_df is not None and not htf_df.empty:
+            logger.debug(f"📊 {symbol} HTF: Trend={htf_trend}, Score={htf_score}/3, Aligned={htf_aligned}")
+
+        # ========== STEP 6: GENERATE SIGNAL (with HTF filter) ==========
         signal_data = None
 
         if buy_ok:
-            signal_data = self._generate_buy_signal(symbol, df, tdi_result, bb_result, buy_reason)
-            logger.info(f"🟢 {symbol}: BUY signal generated - {buy_reason}")
+            # Check HTF alignment for BUY
+            if self.require_htf_alignment and htf_df is not None and not htf_df.empty:
+                if htf_aligned and htf_trend == "BULLISH":
+                    signal_data = self._generate_buy_signal(symbol, df, tdi_result, bb_result, buy_reason)
+                    signal_data['htf_aligned'] = True
+                    signal_data['htf_trend'] = htf_trend
+                    signal_data['htf_score'] = htf_score
+                    logger.info(f"🟢 {symbol}: BUY signal generated (HTF BULLISH: {htf_score}/3) - {buy_reason}")
+                else:
+                    logger.debug(f"🚫 {symbol}: BUY conditions met but HTF not aligned (HTF: {htf_trend}, Score: {htf_score}/3)")
+                    return self._no_signal(symbol, f"HTF not aligned: {htf_trend} ({htf_score}/3)")
+            else:
+                # No HTF data or alignment not required
+                signal_data = self._generate_buy_signal(symbol, df, tdi_result, bb_result, buy_reason)
+                signal_data['htf_aligned'] = not self.require_htf_alignment
+                signal_data['htf_trend'] = "UNKNOWN"
+                signal_data['htf_score'] = 0
+                logger.info(f"🟢 {symbol}: BUY signal generated (HTF check bypassed) - {buy_reason}")
+
         elif sell_ok:
-            signal_data = self._generate_sell_signal(symbol, df, tdi_result, bb_result, sell_reason)
-            logger.info(f"🔴 {symbol}: SELL signal generated - {sell_reason}")
+            # Check HTF alignment for SELL
+            if self.require_htf_alignment and htf_df is not None and not htf_df.empty:
+                if htf_aligned and htf_trend == "BEARISH":
+                    signal_data = self._generate_sell_signal(symbol, df, tdi_result, bb_result, sell_reason)
+                    signal_data['htf_aligned'] = True
+                    signal_data['htf_trend'] = htf_trend
+                    signal_data['htf_score'] = htf_score
+                    logger.info(f"🔴 {symbol}: SELL signal generated (HTF BEARISH: {htf_score}/3) - {sell_reason}")
+                else:
+                    logger.debug(f"🚫 {symbol}: SELL conditions met but HTF not aligned (HTF: {htf_trend}, Score: {htf_score}/3)")
+                    return self._no_signal(symbol, f"HTF not aligned: {htf_trend} ({htf_score}/3)")
+            else:
+                # No HTF data or alignment not required
+                signal_data = self._generate_sell_signal(symbol, df, tdi_result, bb_result, sell_reason)
+                signal_data['htf_aligned'] = not self.require_htf_alignment
+                signal_data['htf_trend'] = "UNKNOWN"
+                signal_data['htf_score'] = 0
+                logger.info(f"🔴 {symbol}: SELL signal generated (HTF check bypassed) - {sell_reason}")
+
         else:
             tdi_level = tdi_result.get('tdi_level', 50)
             tdi_zone = tdi_result.get('tdi_zone', 'UNKNOWN')
             reason = f"TDI: {tdi_level:.1f} ({tdi_zone})"
             return self._no_signal(symbol, reason)
 
-        # ========== STEP 6: AI VALIDATION ==========
+        # ========== STEP 7: QUALITY SCORE VALIDATION ==========
+        quality_score = signal_data.get('quality_score', 0)
+        if quality_score < self.min_quality_score:
+            logger.debug(f"🚫 {symbol}: Quality score {quality_score} below minimum {self.min_quality_score}")
+            return self._no_signal(symbol, f"Quality score too low: {quality_score}")
+
+        # ========== STEP 8: AI VALIDATION ==========
         if self.use_ai:
             signal_data = self._apply_ai_validation(symbol, signal_data)
+            # If AI rejected, return no trade
+            if signal_data.get('signal') == 'NO_TRADE':
+                return signal_data
 
-        # ========== STEP 7: GENERATE CHEAT SHEET ==========
+        # ========== STEP 9: GENERATE CHEAT SHEET ==========
         signal_data['cheat_sheet'] = self._generate_ai_enhanced_cheat_sheet(signal_data)
 
         self.last_signal = signal_data
         self.last_signal_time = datetime.now()
 
         return signal_data
+
+    def _check_htf_trend(self, htf_df: Optional[pd.DataFrame], direction: str) -> Tuple[str, int, bool]:
+        """
+        Check HTF trend alignment.
+
+        Returns:
+            (trend, score, aligned)
+            trend: "BULLISH", "BEARISH", "NEUTRAL", "UNKNOWN"
+            score: 0-3 (number of MAs price is above)
+            aligned: True if aligned with direction
+        """
+        if htf_df is None or htf_df.empty:
+            return "UNKNOWN", 0, not self.require_htf_alignment
+
+        if not self.require_htf_alignment:
+            return "UNKNOWN", 0, True
+
+        try:
+            close = htf_df['close'].iloc[-1]
+
+            # Calculate MAs if not present
+            ma7 = htf_df['ma7'].iloc[-1] if 'ma7' in htf_df else htf_df['close'].rolling(7).mean().iloc[-1]
+            ma25 = htf_df['ma25'].iloc[-1] if 'ma25' in htf_df else htf_df['close'].rolling(25).mean().iloc[-1]
+            ma99 = htf_df['ma99'].iloc[-1] if 'ma99' in htf_df else htf_df['close'].rolling(99).mean().iloc[-1]
+
+            # Count bullish indicators (price above MA)
+            above_ma7 = close > ma7
+            above_ma25 = close > ma25
+            above_ma99 = close > ma99
+            score = sum([above_ma7, above_ma25, above_ma99])
+
+            # Determine trend
+            if score >= self.htf_threshold:
+                trend = "BULLISH"
+            elif score <= 1:
+                trend = "BEARISH"
+            else:
+                trend = "NEUTRAL"
+
+            # Check alignment with trade direction
+            if direction == "BUY":
+                aligned = (trend == "BULLISH")
+            elif direction == "SELL":
+                aligned = (trend == "BEARISH")
+            else:
+                aligned = False
+
+            logger.debug(f"HTF Check: Price={close:.2f}, MA7={ma7:.2f}, MA25={ma25:.2f}, MA99={ma99:.2f}")
+            logger.debug(f"HTF: Trend={trend}, Score={score}/3, Aligned={aligned}")
+
+            return trend, score, aligned
+
+        except Exception as e:
+            logger.warning(f"HTF trend check error: {e}")
+            return "UNKNOWN", 0, not self.require_htf_alignment
 
     def _apply_ai_validation(self, symbol: str, signal_data: Dict[str, Any]) -> Dict[str, Any]:
         """Apply AI validation to signal."""
@@ -247,6 +379,9 @@ class SignalEngine:
         # Get TDI zone description
         tdi_zone_desc = tdi_data.get('tdi_zone_description', '')
 
+        # Get grade
+        grade = self._get_grade(quality_score)
+
         return {
             'symbol': symbol,
             'direction': 'BUY',
@@ -257,6 +392,8 @@ class SignalEngine:
             'rrr': rrr,
             'confidence': tdi_data.get('confidence', 0.7),
             'quality_score': quality_score,
+            'total_score': quality_score,
+            'grade': grade,
             'tdi_level': tdi_data.get('tdi_level', 50),
             'tdi_zone': tdi_data.get('tdi_zone', 'UNKNOWN'),
             'tdi_zone_description': tdi_zone_desc,
@@ -284,6 +421,10 @@ class SignalEngine:
             'condition_3_bb_touch': bb_data.get('touch_lower', False) or bb_data.get('position', 0.5) < 0.30,
             'condition_4_candles_shrinking': bb_data.get('candles_shrinking', False),
             'condition_5_reversal_confirm': bb_data.get('reversal_buy', False),
+            # HTF fields
+            'htf_aligned': False,
+            'htf_trend': 'UNKNOWN',
+            'htf_score': 0,
         }
 
     def _generate_sell_signal(self, symbol: str, df: pd.DataFrame,
@@ -314,6 +455,9 @@ class SignalEngine:
         # Get TDI zone description
         tdi_zone_desc = tdi_data.get('tdi_zone_description', '')
 
+        # Get grade
+        grade = self._get_grade(quality_score)
+
         return {
             'symbol': symbol,
             'direction': 'SELL',
@@ -324,6 +468,8 @@ class SignalEngine:
             'rrr': rrr,
             'confidence': tdi_data.get('confidence', 0.7),
             'quality_score': quality_score,
+            'total_score': quality_score,
+            'grade': grade,
             'tdi_level': tdi_data.get('tdi_level', 50),
             'tdi_zone': tdi_data.get('tdi_zone', 'UNKNOWN'),
             'tdi_zone_description': tdi_zone_desc,
@@ -351,6 +497,10 @@ class SignalEngine:
             'condition_3_bb_touch': bb_data.get('touch_upper', False) or bb_data.get('position', 0.5) > 0.70,
             'condition_4_candles_shrinking': bb_data.get('candles_shrinking', False),
             'condition_5_reversal_confirm': bb_data.get('reversal_sell', False),
+            # HTF fields
+            'htf_aligned': False,
+            'htf_trend': 'UNKNOWN',
+            'htf_score': 0,
         }
 
     def _calculate_quality_score(self, tdi_data: Dict, bb_data: Dict) -> int:
@@ -359,11 +509,11 @@ class SignalEngine:
 
         # TDI zone bonus
         zone = tdi_data.get('tdi_zone', '')
-        if zone == 'OVERSOLD' or zone == 'OVERBOUGHT':
+        if zone in ['OVERSOLD', 'OVERBOUGHT']:
             score += 15
-        elif zone == 'SOFT_BUY' or zone == 'SOFT_SELL':
+        elif zone in ['SOFT_BUY', 'SOFT_SELL']:
             score += 10
-        elif zone == 'BUY_ZONE':
+        elif zone in ['BUY_ZONE', 'SELL_ZONE']:
             score += 5
 
         # Crossover bonus
@@ -385,7 +535,26 @@ class SignalEngine:
         if bb_data.get('candles_shrinking', False):
             score += 5
 
+        # Divergence bonus (if available)
+        if tdi_data.get('divergence_detected', False):
+            score += 5
+
         return min(100, max(0, score))
+
+    def _get_grade(self, score: int) -> str:
+        """Get grade based on score - LOWERED THRESHOLDS for more signals."""
+        if score >= 90:
+            return "A+"
+        elif score >= 80:
+            return "A"
+        elif score >= 72:
+            return "B+"
+        elif score >= 60:
+            return "B"
+        elif score >= 50:
+            return "C"
+        else:
+            return "D"
 
     def _generate_ai_enhanced_cheat_sheet(self, signal_data: Dict[str, Any]) -> str:
         """Generate cheat sheet with AI insights."""
@@ -399,6 +568,17 @@ class SignalEngine:
         else:
             return self.cheat_sheet.generate_wait_cheat_sheet(signal_data)
 
+        # Add HTF info
+        htf_trend = signal_data.get('htf_trend', 'UNKNOWN')
+        htf_score = signal_data.get('htf_score', 0)
+        htf_aligned = signal_data.get('htf_aligned', False)
+
+        htf_section = f"""
+📊 <b>1H Trend Analysis</b>
+• Trend: <b>{htf_trend}</b>
+• Alignment: {'✅ ALIGNED' if htf_aligned else '❌ NOT ALIGNED'}
+• Bull Score: {htf_score}/3 MAs above price"""
+
         # Add AI insights if available
         ai_data = signal_data.get('ai_analysis', {})
         if ai_data and ai_data.get('decision'):
@@ -407,15 +587,14 @@ class SignalEngine:
 • Decision: <b>{ai_data.get('decision', 'UNKNOWN')}</b>
 • Confidence: <b>{ai_data.get('confidence', 0)*100:.0f}%</b>
 • Reasoning: {ai_data.get('reasoning', 'N/A')}
-• Risk Level: <b>{ai_data.get('risk_level', 'MEDIUM')}</b>
-• Response Time: {ai_data.get('response_time_ms', 0):.0f}ms"""
+• Risk Level: <b>{ai_data.get('risk_level', 'MEDIUM')}</b>"""
 
             if ai_data.get('market_analysis'):
                 ai_section += f"\n• Market: {ai_data.get('market_analysis')}"
 
-            return base + "\n\n" + ai_section
+            return base + "\n\n" + htf_section + "\n\n" + ai_section
 
-        return base
+        return base + "\n\n" + htf_section
 
     def _no_signal(self, symbol: str, reason: str) -> Dict[str, Any]:
         """Return no signal result."""
@@ -434,6 +613,9 @@ class SignalEngine:
             'ai_reasoning': 'No signal to analyze',
             'ai_confidence': 0.0,
             'ai_analysis': {},
+            'htf_aligned': False,
+            'htf_trend': 'UNKNOWN',
+            'htf_score': 0,
         }
         return data
 
@@ -466,4 +648,8 @@ class SignalEngine:
             'min_rrr': self.min_rrr,
             'default_rrr': self.default_rrr,
             'max_rrr': self.max_rrr,
+            'require_htf_alignment': self.require_htf_alignment,
+            'htf_threshold': self.htf_threshold,
+            'min_quality_score': self.min_quality_score,
+            'version': '3.4.1'
         }
