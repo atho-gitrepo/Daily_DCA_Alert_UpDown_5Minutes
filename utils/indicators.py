@@ -308,17 +308,22 @@ class Indicators:
         return calculate_all_indicators(df)
 
     @staticmethod
+    def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
+        """Alias for backward compatibility."""
+        return calculate_all_indicators(df)
+
+    @staticmethod
     def calculate_tdi(df: pd.DataFrame) -> pd.DataFrame:
         return calculate_tdi(df)
 
     @staticmethod
-    def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
-        """Alias for calculate_all() for backward compatibility."""
-        return calculate_all_indicators(df)
-
-    @staticmethod
     def calculate_macd(df: pd.DataFrame) -> pd.DataFrame:
         return calculate_macd(df)
+
+    @staticmethod
+    def calculate_bollinger_bands(df: pd.DataFrame) -> pd.DataFrame:
+        """Alias for calculate_bb - matches old API."""
+        return calculate_bollinger_bands(df)
 
     @staticmethod
     def calculate_bb(df: pd.DataFrame) -> pd.DataFrame:
@@ -327,6 +332,10 @@ class Indicators:
     @staticmethod
     def calculate_atr(df: pd.DataFrame) -> pd.DataFrame:
         return calculate_atr(df)
+
+    @staticmethod
+    def calculate_heikin_ashi(df: pd.DataFrame) -> pd.DataFrame:
+        return calculate_heikin_ashi(df)
 
 
 # Create singleton
