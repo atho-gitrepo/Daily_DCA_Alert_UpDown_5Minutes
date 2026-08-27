@@ -1,26 +1,28 @@
 """
 Signal Manager - Handles signal lifecycle, debouncing, and duplicate prevention
 ALIGNED WITH YOUR MANUAL STRATEGY:
-- ENTRY: Trade from green line to 50 line
-- EXIT: TDI hits 50 and rejects
-- CONTINUATION: If breaks 50, hold longer
-Version: 3.4.1 - FIXED: TDI 50-line exit logic
+- ENTRY: TDI below 50 (BUY) or above 50 (SELL)
+- EXIT: BUY → TDI 70, SELL → TDI 30
+- TP/SL: Always priority
+- Max hold: Force exit
+Version: 3.4.1 - FIXED: Added missing pandas import
 """
 
 import logging
 import time
+import pandas as pd  # ← ADD THIS IMPORT
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, Tuple, List
 from dataclasses import dataclass, field
 from enum import Enum
 import json
 import traceback
-from utils.mongodb_client import convert_numpy_types
 
 try:
-    from utils.mongodb_client import mongodb_client as db_client
+    from utils.mongodb_client import mongodb_client as db_client, convert_numpy_types
 except ImportError:
     db_client = None
+    convert_numpy_types = None
     logging.warning("No database client available. Signal persistence disabled.")
 
 logger = logging.getLogger(__name__)
@@ -47,8 +49,7 @@ class TradeLifecycle(str, Enum):
     CLOSED = "CLOSED"
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
-    EXIT_50_REJECT = "EXIT_50_REJECT"  # TDI rejected at 50
-    EXIT_50_BREAK = "EXIT_50_BREAK"    # TDI broke through 50
+    EXIT_TARGET = "EXIT_TARGET"  # TDI reached target (70 for BUY, 30 for SELL)
     EXIT_1H = "EXIT_1H"
 
 
@@ -75,13 +76,10 @@ class SignalData:
     tdi_fast: float = 0.0
     tdi_slow: float = 0.0
 
-    # Strategy specific
+    # YOUR strategy specific
     entry_tdi: float = 0.0
-    target_tdi: float = 50.0
-    strategy_type: str = "REVERSAL_TO_50"
-    tdi_50_reached: bool = False
-    tdi_50_rejected: bool = False
-    tdi_50_broken: bool = False
+    target_tdi: float = 0.0  # 70 for BUY, 30 for SELL
+    strategy_type: str = "REVERSAL_TO_TARGET"
 
     # BB fields
     bb_position: float = 0.5
@@ -95,7 +93,7 @@ class SignalData:
 
     # Conditions
     conditions_met: int = 0
-    conditions_total: int = 5
+    conditions_total: int = 4
     condition_1_tdi_zone: bool = False
     condition_2_tdi_cross: bool = False
     condition_3_bb_touch: bool = False
@@ -143,9 +141,6 @@ class SignalData:
             "tdi_zone": self.tdi_zone,
             "entry_tdi": self.entry_tdi,
             "target_tdi": self.target_tdi,
-            "tdi_50_reached": self.tdi_50_reached,
-            "tdi_50_rejected": self.tdi_50_rejected,
-            "tdi_50_broken": self.tdi_50_broken,
             "bb_position": self.bb_position,
             "macd_bullish": self.macd_bullish,
             "macd_bearish": self.macd_bearish,
@@ -174,13 +169,13 @@ class SignalData:
 
 class SignalManager:
     """
-    Signal Manager aligned with YOUR manual strategy.
+    Signal Manager aligned with YOUR actual strategy.
 
     YOUR STRATEGY:
-    - ENTRY: Trade from green line to 50 line
-    - EXIT: TDI hits 50 and rejects
-    - CONTINUATION: If breaks 50, hold longer
-    - MAX HOLD: 60 minutes
+    - BUY: Enter TDI below 50 → Exit at TDI 70
+    - SELL: Enter TDI above 50 → Exit at TDI 30
+    - TP/SL: Always priority
+    - Max hold: Force exit
     """
 
     def __init__(self):
@@ -198,9 +193,10 @@ class SignalManager:
         # Exit settings (YOUR STRATEGY)
         self.MAX_HOLD_MINUTES = 60
         self.MIN_HOLD_MINUTES = 15
-        self.EXTENSION_MINUTES = 30  # Extra hold if breakout
+        self.BUY_EXIT_TARGET = 70.0   # TDI target for BUY
+        self.SELL_EXIT_TARGET = 30.0  # TDI target for SELL
 
-        # Grade thresholds (lowered for more signals)
+        # Grade thresholds
         self.GRADE_A_THRESHOLD = 80
         self.GRADE_B_THRESHOLD = 60
         self.GRADE_C_THRESHOLD = 50
@@ -209,11 +205,10 @@ class SignalManager:
         self.db_client = db_client
         self.db_enabled = self.db_client is not None and self.db_client.is_available() if self.db_client is not None else False
 
-        logger.info(f"✅ SIGNAL_MANAGER v3.4.1: Initialized")
-        logger.info(f"  - Strategy: Trade from green line to 50 line")
+        logger.info(f"✅ SIGNAL_MANAGER v3.4.4: Initialized")
+        logger.info(f"  - Strategy: BUY → TDI 70, SELL → TDI 30")
         logger.info(f"  - Max Hold: {self.MAX_HOLD_MINUTES} minutes")
         logger.info(f"  - Min Hold: {self.MIN_HOLD_MINUTES} minutes")
-        logger.info(f"  - Extension: {self.EXTENSION_MINUTES} minutes (breakout)")
         logger.info(f"  - Grade A+: 90+ | A: 80+ | B+: 72+ | B: 60+ | C: 50+")
         logger.info(f"  - Min Signal Score: {self.MIN_SIGNAL_SCORE}")
 
@@ -242,7 +237,7 @@ class SignalManager:
 
     def lock_symbol(self, symbol: str, signal_type: str, entry_price: float,
                     raw_data: Dict, **kwargs) -> bool:
-        """Lock a symbol with a new signal - aligned with YOUR strategy."""
+        """Lock a symbol with a new signal."""
         try:
             quality_score = raw_data.get('quality_score', 0)
             grade = self._get_grade(quality_score)
@@ -282,10 +277,10 @@ class SignalManager:
                 tdi_fast=raw_data.get('tdi_fast', 50),
                 tdi_slow=raw_data.get('tdi_slow', 50),
 
-                # Strategy specific
+                # YOUR strategy specific
                 entry_tdi=raw_data.get('entry_tdi', 50),
                 target_tdi=raw_data.get('target_tdi', 50),
-                strategy_type=raw_data.get('strategy_type', 'REVERSAL_TO_50'),
+                strategy_type=raw_data.get('strategy_type', 'REVERSAL_TO_TARGET'),
 
                 # BB
                 bb_position=raw_data.get('bb_position', 0.5),
@@ -299,7 +294,7 @@ class SignalManager:
 
                 # Conditions
                 conditions_met=raw_data.get('conditions_met', 0),
-                conditions_total=raw_data.get('conditions_total', 5),
+                conditions_total=raw_data.get('conditions_total', 4),
                 condition_1_tdi_zone=raw_data.get('condition_1_tdi_zone', False),
                 condition_2_tdi_cross=raw_data.get('condition_2_tdi_cross', False),
                 condition_3_bb_touch=raw_data.get('condition_3_bb_touch', False),
@@ -321,14 +316,17 @@ class SignalManager:
             )
 
             # Save to DB
-            if self.db_enabled:
-                signal_dict = signal.to_dict()
-                # Convert numpy types before saving
-                signal_dict = convert_numpy_types(signal_dict)
-                doc_id = self._save_to_db(signal_dict)
-                if doc_id:
-                    signal.db_doc_id = doc_id
-                    raw_data['db_doc_id'] = doc_id
+            if self.db_enabled and convert_numpy_types:
+                try:
+                    signal_dict = signal.to_dict()
+                    # Convert numpy types before saving
+                    signal_dict = convert_numpy_types(signal_dict)
+                    doc_id = self._save_to_db(signal_dict)
+                    if doc_id:
+                        signal.db_doc_id = doc_id
+                        raw_data['db_doc_id'] = doc_id
+                except Exception as e:
+                    logger.warning(f"{EMOJI['WARNING']} Failed to save signal to DB: {e}")
 
             self.active_signals[symbol] = signal
             self.symbol_last_signal[symbol] = datetime.now()
@@ -337,13 +335,15 @@ class SignalManager:
 
             logger.info(
                 f"{EMOJI['LOCK']} {signal_type} {symbol} @ {entry_price:.4f} | "
-                f"TDI: {signal.entry_tdi:.1f} → Target: 50 | "
+                f"TDI: {signal.entry_tdi:.1f} → Target: {signal.target_tdi:.1f} | "
                 f"Grade: {grade} | Score: {quality_score}"
             )
             return True
 
         except Exception as e:
             logger.error(f"{EMOJI['ERROR']} Error locking {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def _save_to_db(self, signal_data: Dict) -> Optional[str]:
@@ -359,13 +359,13 @@ class SignalManager:
         return self.active_signals.copy()
 
     def check_active_signal(self, symbol: str, current_price: float,
-                       last_candle: Dict) -> Tuple[str, float, Optional[SignalData]]:
+                           last_candle: Dict) -> Tuple[str, float, Optional[SignalData]]:
         """
         Check active signal - ALIGNED WITH YOUR ACTUAL STRATEGY.
 
         YOUR EXIT RULES:
-        - BUY: Exit when TDI reaches 70.0 (between Soft Sell and Hard Sell)
-        - SELL: Exit when TDI reaches 30.0 (between Soft Buy and Hard Buy)
+        - BUY: Exit when TDI reaches 70.0
+        - SELL: Exit when TDI reaches 30.0
         - TP/SL: Always priority
         - Max hold: Force exit
         """
@@ -415,34 +415,20 @@ class SignalManager:
         # ===== RULE 3: TDI TARGET EXIT (YOUR STRATEGY) =====
         # Get current TDI from last_candle
         current_tdi = last_candle.get('tdi_slow_ma', signal.tdi_level)
-        prev_tdi = last_candle.get('tdi_slow_ma_prev', current_tdi)
-
-        # YOUR TARGETS
-        BUY_EXIT_TARGET = 70.0   # Between Soft Sell (65) and Hard Sell (75)
-        SELL_EXIT_TARGET = 30.0  # Between Soft Buy (35) and Hard Buy (25)
 
         if signal.signal_type == "BUY":
             # BUY: Entered below 50, exit when TDI reaches 70
-            if current_tdi >= BUY_EXIT_TARGET:
+            if current_tdi >= self.BUY_EXIT_TARGET:
                 updated = self._unlock_symbol(symbol, TradeLifecycle.EXIT_TARGET, current_price)
-                logger.info(f"{EMOJI['EXIT']} {symbol}: TDI reached {BUY_EXIT_TARGET} - EXIT at ${current_price:.4f}")
+                logger.info(f"{EMOJI['EXIT']} {symbol}: TDI reached {self.BUY_EXIT_TARGET} - EXIT at ${current_price:.4f}")
                 return "EXIT_TARGET", current_price - signal.entry_price, updated
-            elif current_tdi > signal.tdi_level:
-                # Progress tracking
-                progress = (current_tdi - signal.tdi_level) / (BUY_EXIT_TARGET - signal.tdi_level) * 100
-                if progress > 50 and progress % 10 < 2:
-                    logger.debug(f"{symbol}: BUY progress: {progress:.1f}% toward {BUY_EXIT_TARGET}")
 
         elif signal.signal_type == "SELL":
             # SELL: Entered above 50, exit when TDI reaches 30
-            if current_tdi <= SELL_EXIT_TARGET:
+            if current_tdi <= self.SELL_EXIT_TARGET:
                 updated = self._unlock_symbol(symbol, TradeLifecycle.EXIT_TARGET, current_price)
-                logger.info(f"{EMOJI['EXIT']} {symbol}: TDI reached {SELL_EXIT_TARGET} - EXIT at ${current_price:.4f}")
+                logger.info(f"{EMOJI['EXIT']} {symbol}: TDI reached {self.SELL_EXIT_TARGET} - EXIT at ${current_price:.4f}")
                 return "EXIT_TARGET", signal.entry_price - current_price, updated
-            elif current_tdi < signal.tdi_level:
-                progress = (signal.tdi_level - current_tdi) / (signal.tdi_level - SELL_EXIT_TARGET) * 100
-                if progress > 50 and progress % 10 < 2:
-                    logger.debug(f"{symbol}: SELL progress: {progress:.1f}% toward {SELL_EXIT_TARGET}")
 
         # ===== RULE 4: MAX HOLD REACHED =====
         if age_minutes >= signal.max_hold_minutes:
@@ -478,10 +464,14 @@ class SignalManager:
         signal.pnl_percent = (signal.pnl / signal.entry_price) * 100 if signal.entry_price > 0 else 0
 
         # Update DB
-        if signal.db_doc_id:
-            update_data = signal.to_dict()
-            update_data['status'] = status_str
-            self._update_in_db(signal.db_doc_id, status_str, update_data)
+        if signal.db_doc_id and self.db_enabled:
+            try:
+                update_data = signal.to_dict()
+                if convert_numpy_types:
+                    update_data = convert_numpy_types(update_data)
+                self._update_in_db(signal.db_doc_id, status_str, update_data)
+            except Exception as e:
+                logger.warning(f"{EMOJI['WARNING']} Failed to update signal in DB: {e}")
 
         self.signal_history.append(signal)
         if len(self.signal_history) > self.max_history:
@@ -517,9 +507,10 @@ class SignalManager:
             "exit_rules": {
                 "max_hold_minutes": self.MAX_HOLD_MINUTES,
                 "min_hold_minutes": self.MIN_HOLD_MINUTES,
-                "extension_minutes": self.EXTENSION_MINUTES,
+                "buy_exit_target": self.BUY_EXIT_TARGET,
+                "sell_exit_target": self.SELL_EXIT_TARGET,
             },
-            "version": "3.4.1"
+            "version": "3.4.4"
         }
 
 
