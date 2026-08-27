@@ -208,7 +208,7 @@ class SignalManager:
         self.db_client = db_client
         self.db_enabled = self.db_client is not None and self.db_client.is_available() if self.db_client is not None else False
 
-        logger.info(f"✅ SIGNAL_MANAGER v3.4.3: Initialized")
+        logger.info(f"✅ SIGNAL_MANAGER v3.4.1: Initialized")
         logger.info(f"  - Strategy: Trade from green line to 50 line")
         logger.info(f"  - Max Hold: {self.MAX_HOLD_MINUTES} minutes")
         logger.info(f"  - Min Hold: {self.MIN_HOLD_MINUTES} minutes")
@@ -516,7 +516,7 @@ class SignalManager:
                 "min_hold_minutes": self.MIN_HOLD_MINUTES,
                 "extension_minutes": self.EXTENSION_MINUTES,
             },
-            "version": "3.4.3"
+            "version": "3.4.1"
         }
 
 

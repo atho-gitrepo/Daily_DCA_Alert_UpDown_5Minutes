@@ -173,7 +173,7 @@ class DataFetcher:
     REQUIRED_COLUMNS = ['open', 'high', 'low', 'close', 'volume']
 
     # Version
-    CACHE_VERSION = "3.4.2"
+    CACHE_VERSION = "3.4.1"
 
     def __init__(self, demo_mode: Optional[bool] = None):
         data_logger.info(f"{EMOJI['START']} DATA_INIT: Starting DataFetcher v{self.CACHE_VERSION}")

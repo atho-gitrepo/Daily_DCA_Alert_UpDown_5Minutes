@@ -113,7 +113,7 @@ class TelegramBot:
         self._is_healthy = True
 
         if self.enabled:
-            logger.info(f"{EMOJI['SUCCESS']} TELEGRAM_BOT v3.4.2: Initialized with chat_id: {self.chat_id}")
+            logger.info(f"{EMOJI['SUCCESS']} TELEGRAM_BOT v3.4.1: Initialized with chat_id: {self.chat_id}")
             logger.info(f"  Strategy: Super TDI + MACD + Super Bollinger Bands")
             logger.info(f"  MACD: Fast={self.MACD_FAST}, Slow={self.MACD_SLOW}, Signal={self.MACD_SIGNAL}")
             self._test_connection()
@@ -671,7 +671,7 @@ class TelegramBot:
             macd_required = config_info.get('macd_required', True)
 
             message = f"""
-🚀 <b>Trading Bot Started</b> - Super TDI + MACD + Super BB v3.4.2
+🚀 <b>Trading Bot Started</b> - Super TDI + MACD + Super BB v3.4.1
 
 <b>Strategy</b>: Super TDI + MACD + Super Bollinger Bands
 <b>Environment</b>: {config_info.get('environment', 'production')}
@@ -716,7 +716,7 @@ Bot is now monitoring...
             avg_rrr = stats.get('avg_rrr', 0)
 
             message = f"""
-⚠️ <b>Trading Bot Stopped</b> - Super TDI + MACD + Super BB v3.4.2
+⚠️ <b>Trading Bot Stopped</b> - Super TDI + MACD + Super BB v3.4.1
 
 <b>Summary</b>
 • Signals: {signals}

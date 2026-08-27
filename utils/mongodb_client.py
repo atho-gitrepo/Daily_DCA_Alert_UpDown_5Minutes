@@ -61,7 +61,7 @@ class MongoDBClient:
         self.client = None
         self.db = None
         self.initialized = False
-        self.version = "3.4.0"
+        self.version = "3.4.1"
         self._connected = False
         self._last_error = None
         self._connection_attempts = 0
@@ -392,7 +392,7 @@ class MongoDBClient:
             # Add timestamps
             signal_data['created_at'] = datetime.now().isoformat()
             signal_data['updated_at'] = datetime.now().isoformat()
-            signal_data['strategy_version'] = "3.4.0"
+            signal_data['strategy_version'] = "3.4.1"
             signal_data['strategy_name'] = "Super TDI + Super Bollinger Bands"
 
             # Ensure condition fields are present
@@ -663,7 +663,7 @@ class MongoDBClient:
                 signal_data['_id'] = doc_id
 
             signal_data['resolved_at'] = datetime.now().isoformat()
-            signal_data['strategy_version'] = "3.4.0"
+            signal_data['strategy_version'] = "3.4.1"
 
             # Save to resolved
             resolved_collection = self.db[self.RESOLVED_COLLECTION]
@@ -822,7 +822,7 @@ class MongoDBClient:
         try:
             collection = self.db[self.STATS_COLLECTION]
             stats['updated_at'] = datetime.now().isoformat()
-            stats['strategy_version'] = "3.4.0"
+            stats['strategy_version'] = "3.4.1"
             stats['strategy_name'] = "Super TDI + Super Bollinger Bands"
 
             result = collection.update_one(
@@ -866,7 +866,7 @@ class MongoDBClient:
         try:
             collection = self.db[self.ERRORS_COLLECTION]
             error_data['timestamp'] = datetime.now().isoformat()
-            error_data['strategy_version'] = "3.4.0"
+            error_data['strategy_version'] = "3.4.1"
 
             result = collection.insert_one(error_data)
             return result.acknowledged

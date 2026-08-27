@@ -89,7 +89,7 @@ bot_stats = {
     },
     'total_pnl': 0.0,
     'errors': 0,
-    'version': '3.4.2',
+    'version': '3.4.1',
     'strategy': 'Super TDI + MACD + Super Bollinger Bands',
     'ai_enabled': ai_analyzer.enabled if ai_analyzer else False,
     'mongodb_enabled': mongodb_client.is_available() if mongodb_client else False,
@@ -448,7 +448,7 @@ def run_health_server():
                 self.end_headers()
                 status_data = {
                     'status': 'running' if running else 'stopped',
-                    'version': '3.4.2',
+                    'version': '3.4.1',
                     'strategy': 'Super TDI + MACD + Super Bollinger Bands',
                     'timestamp': datetime.now().isoformat(),
                     'stats': bot_stats,

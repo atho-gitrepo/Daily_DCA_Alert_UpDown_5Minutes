@@ -59,7 +59,7 @@ class SignalEngine:
         self.grade_b_threshold = getattr(config.strategy, 'grade_b_threshold', 60)
         self.grade_c_threshold = getattr(config.strategy, 'grade_c_threshold', 50)
 
-        logger.info(f"🔧 Signal Engine v3.4.3 initialized - AI: {'✅' if self.use_ai else '❌'}")
+        logger.info(f"🔧 Signal Engine v3.4.1 initialized - AI: {'✅' if self.use_ai else '❌'}")
         logger.info(f"   RRR Range: {self.min_rrr} - {self.max_rrr}")
         logger.info(f"   Default RRR: {self.default_rrr}")
         logger.info(f"   TDI Center Line: {self.tdi_center_line}")
@@ -582,7 +582,7 @@ class SignalEngine:
     def get_stats(self) -> Dict[str, Any]:
         """Get engine statistics."""
         return {
-            'version': '3.4.3',
+            'version': '3.4.1',
             'strategy': 'Trade to 50 Line',
             'use_ai': self.use_ai,
             'min_rrr': self.min_rrr,

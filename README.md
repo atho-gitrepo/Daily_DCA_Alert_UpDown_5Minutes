@@ -7,7 +7,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 [![Binance](https://img.shields.io/badge/Binance-Futures-yellow.svg)](https://www.binance.com/)
-[![Version](https://img.shields.io/badge/Version-3.4.0-green.svg)]()
+[![Version](https://img.shields.io/badge/Version-3.4.1-green.svg)]()
 
 ---
 
@@ -28,7 +28,7 @@
 
 ## 🚀 Overview
 
-The AI Trading Bot v3.4.0 is a sophisticated algorithmic trading system designed for Binance Futures. It implements a **multi-timeframe strategy** with a **state machine architecture** that separates setup detection from signal execution, ensuring high-quality entries with proper confirmation.
+The AI Trading Bot v3.4.1 is a sophisticated algorithmic trading system designed for Binance Futures. It implements a **multi-timeframe strategy** with a **state machine architecture** that separates setup detection from signal execution, ensuring high-quality entries with proper confirmation.
 
 ### Core Philosophy
 
@@ -38,7 +38,7 @@ The AI Trading Bot v3.4.0 is a sophisticated algorithmic trading system designed
 
 ## ✨ Key Features
 
-### v3.4.0 Major Improvements
+### v3.4.1 Major Improvements
 
 | # | Feature | Description |
 |---|---------|-------------|
@@ -182,7 +182,7 @@ TELEGRAM_CHAT_ID=your_chat_id
 # ========== MONGODB ==========
 MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/database
 
-# ========== v3.4.0 THRESHOLDS ==========
+# ========== v3.4.1 THRESHOLDS ==========
 MIN_SETUP_SCORE=70
 MIN_TRIGGER_SCORE=70
 COUNTER_TREND_MIN_SCORE=82
@@ -335,7 +335,7 @@ Response:
 ```json
 {
   "status": "running",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "timestamp": "2026-08-23T16:13:51.360229Z",
   "stats": {
     "signals_generated": 0,
@@ -383,7 +383,7 @@ Returns Prometheus-style metrics for monitoring.
 | Issue | Solution |
 |-------|----------|
 | `ModuleNotFoundError: No module named 'data_fetcher'` | Ensure `utils/data_fetcher.py` exists. Check import paths in `main_v34.py` |
-| **No signals generated** | This is normal. v3.4.0 is strict by design. Wait for proper market conditions |
+| **No signals generated** | This is normal. v3.4.1 is strict by design. Wait for proper market conditions |
 | **Binance connection failed** | Check API keys. Use testnet for testing: `BINANCE_USE_TESTNET=true` |
 | **MongoDB connection failed** | Check `MONGODB_URI` or set `MONGODB_ENABLED=false` to run in-memory |
 | **Telegram not sending messages** | Verify `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` |
@@ -414,7 +414,7 @@ if result['signal'] == 'NO_TRADE':
 
 ## 📈 Version History
 
-### v3.4.0 (Current)
+### v3.4.1(Current)
 
 - **Setup ≠ Signal** - Separate detection from entry trigger
 - **HTF Regime Filter** - 4H/1H directional bias control
@@ -450,7 +450,7 @@ trading-bot/
 ├── settings.py              # Configuration
 ├── strategy/
 │   ├── __init__.py
-│   ├── signal_engine_v34.py # v3.4.0 Signal Engine
+│   ├── signal_engine_v34.py # v3.4.1 Signal Engine
 │   ├── signal_state.py      # State Machine
 │   ├── htf_regime.py        # HTF Regime System
 │   └── structure.py         # Market Structure Analysis
@@ -516,5 +516,5 @@ Contributions are welcome! Please:
 
 *Built with ❤️ and ☕ by the Trading Bot Team*
 
-**Version 3.4.0** | *Last Updated: August 2026*
+**Version 3.4.1** | *Last Updated: August 2026*
 ```

@@ -50,7 +50,7 @@ class GroqAIAnalyzer:
 
     Uses Groq's LLM to analyze market conditions and validate trade signals.
     Provides human-readable reasoning and risk assessment.
-    Version: 3.4.2 - Enhanced with MACD analysis
+    Version: 3.4.1 - Enhanced with MACD analysis
     """
 
     def __init__(self):
@@ -84,7 +84,7 @@ class GroqAIAnalyzer:
         self.GRADE_B_THRESHOLD = getattr(config.strategy, 'grade_b_threshold', 60)
         self.GRADE_C_THRESHOLD = getattr(config.strategy, 'grade_c_threshold', 50)
 
-        logger.info(f"🤖 AI Analyzer v3.4.2 initialized: {'✅ Enabled' if self.enabled else '❌ Disabled'}")
+        logger.info(f"🤖 AI Analyzer v3.4.1 initialized: {'✅ Enabled' if self.enabled else '❌ Disabled'}")
         if self.enabled:
             logger.info(f"   Model: {self.model}")
             logger.info(f"   Temperature: {self.temperature}")
@@ -540,7 +540,7 @@ Return JSON:
                 'signal': self.MACD_SIGNAL,
                 'required': self.REQUIRE_MACD,
             },
-            'version': '3.4.2'
+            'version': '3.4.1'
         }
 
 
