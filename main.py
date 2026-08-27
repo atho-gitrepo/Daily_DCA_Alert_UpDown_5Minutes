@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI Trading Bot v3.4.2 - Main Entry Point
+AI Trading Bot v3.4.1 - Main Entry Point
 Super TDI + MACD + Super Bollinger Bands Strategy
 ALIGNED WITH MANUAL STRATEGY: RSI (TDI) primary + MACD secondary + BB entry
 """
@@ -495,7 +495,7 @@ def main():
     global running
 
     logger.info("=" * 70)
-    logger.info(f"{EMOJI['START']} AI TRADING BOT v3.4.2")
+    logger.info(f"{EMOJI['START']} AI TRADING BOT v3.4.1")
     logger.info("📊 SUPER TDI + MACD + SUPER BOLLINGER BANDS STRATEGY")
     logger.info("=" * 70)
     logger.info("📋 Strategy Features:")

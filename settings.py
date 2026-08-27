@@ -1,6 +1,6 @@
 """
 Configuration management for the AI Trading Bot.
-Version: 3.4.2 - ALIGNED: Super TDI + MACD + Super Bollinger Bands Strategy
+Version: 3.4.1 - ALIGNED: Super TDI + MACD + Super Bollinger Bands Strategy
 """
 
 import os
@@ -255,7 +255,7 @@ class TelegramConfig:
 class MongoDBConfig:
     """MongoDB configuration."""
     uri: str = ""
-    db_name: str = "trading_bot"
+    db_name: str = "trading_bot_dca"
     active_collection: str = "active_signals"
     resolved_collection: str = "resolved_signals"
     archive_collection: str = "archive_signals"
@@ -300,7 +300,7 @@ class DeploymentConfig:
 class Config:
     """Complete configuration for Super TDI + MACD + Super BB strategy."""
 
-    VERSION = "3.4.2"
+    VERSION = "3.4.1"
 
     def __init__(self):
         self.binance = BinanceConfig()

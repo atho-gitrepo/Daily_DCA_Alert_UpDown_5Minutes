@@ -1,6 +1,6 @@
 """
 Utils package - Data fetching, indicators, signal management, and bot utilities
-Version: 3.4.2
+Version: 3.4.1
 """
 
 from utils.binance_data_client import binance_client

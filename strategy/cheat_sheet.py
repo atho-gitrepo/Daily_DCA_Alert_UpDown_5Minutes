@@ -1,7 +1,7 @@
 """
 Signal Cheat Sheet Generator
 Provides simple, human-readable explanations for every signal
-Version: 3.4.2 - ADDED: MACD confirmation to cheat sheets
+Version: 3.4.1 - ADDED: MACD confirmation to cheat sheets
 """
 
 from typing import Dict, Any, List, Optional

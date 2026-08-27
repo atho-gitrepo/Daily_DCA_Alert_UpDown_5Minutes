@@ -1,7 +1,7 @@
 """
 Market data fetcher for Binance cryptocurrency exchange - SUPER TDI + MACD + SUPER BB STRATEGY.
 Simplified for Super TDI + MACD + Super Bollinger Bands strategy with multi-timeframe support.
-Version: 3.4.2 - ADDED: MACD data support and improved caching
+Version: 3.4.1 - ADDED: MACD data support and improved caching
 """
 
 import pandas as pd

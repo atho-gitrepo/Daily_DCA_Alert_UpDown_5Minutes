@@ -1,7 +1,7 @@
 # README.md
 
 ```markdown
-# 🤖 AI Trading Bot v3.4.0
+# 🤖 AI Trading Bot v3.4.1
 
 **Advanced Multi-Timeframe Trading Bot with Signal State Machine**
 

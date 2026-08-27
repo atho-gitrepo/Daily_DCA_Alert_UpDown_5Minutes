@@ -1,7 +1,7 @@
 """
 MongoDB Client for Trading Bot - SUPER TDI + SUPER BOLLINGER BANDS STRATEGY.
 ALIGNED: Super TDI + Super BB strategy with condition tracking.
-Version: 3.4.0 - ALIGNED: Super TDI + Super BB strategy support
+Version: 3.4.1 - ALIGNED: Super TDI + Super BB strategy support
 """
 
 import os
@@ -224,9 +224,9 @@ class MongoDBClient:
 
         if not db_name:
             try:
-                db_name = getattr(config, 'mongodb_db_name', 'trading_bot')
+                db_name = getattr(config, 'mongodb_db_name', 'trading_bot_dca')
             except:
-                db_name = 'trading_bot'
+                db_name = 'trading_bot_dca'
 
         return db_name
 

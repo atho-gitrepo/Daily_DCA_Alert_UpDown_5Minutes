@@ -1,7 +1,7 @@
 """
 Telegram Bot for Trading Signals - SUPER TDI + MACD + SUPER BOLLINGER BANDS
 ALIGNED: Super TDI + MACD + Super BB Strategy with Cheat Sheet & AI Insights
-Version: 3.4.2 - ADDED: MACD confirmation display
+Version: 3.4.1 - ADDED: MACD confirmation display
 """
 
 import logging

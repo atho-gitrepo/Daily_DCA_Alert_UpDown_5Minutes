@@ -2,7 +2,7 @@
 set -e
 
 echo "============================================================"
-echo "🚀 AI TRADING BOT v3.4.0"
+echo "🚀 AI TRADING BOT v3.4.1"
 echo "📊 Super TDI + Super Bollinger Bands Strategy"
 echo "============================================================"
 echo "Environment: ${ENVIRONMENT:-development}"

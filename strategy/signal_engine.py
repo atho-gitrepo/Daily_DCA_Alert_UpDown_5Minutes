@@ -1,6 +1,11 @@
 """
-Signal Engine - Super TDI + MACD + Bollinger Bands with AI
-Version: 3.4.2 - ADDED: MACD Confirmation, REMOVED: HTF Trend Filter
+Signal Engine - Super TDI + MACD + Super Bollinger Bands
+ALIGNED WITH YOUR MANUAL STRATEGY:
+- PRIMARY: TDI (RSI) - Trade from green line to 50 line
+- SECONDARY: MACD - Confirmation
+- CONFIRMATION: BB - Last thing to confirm
+- EXIT: TDI hits 50 and rejects
+Version: 3.4.1 - FIXED: Aligned with manual strategy
 """
 
 import pandas as pd
@@ -12,288 +17,263 @@ from datetime import datetime
 from strategy.tdi_detector import TDIDetector
 from strategy.bb_detector import BBDetector
 from strategy.cheat_sheet import SignalCheatSheet
-from strategy.ai_analyzer import ai_analyzer, AIAnalysisResult
+from strategy.ai_analyzer import ai_analyzer
 from settings import config
 
-# Setup logger
 logger = logging.getLogger(__name__)
 
 
 class SignalEngine:
     """
-    Signal Engine combining Super TDI + MACD + Bollinger Bands with AI validation.
-    MATCHES YOUR MANUAL STRATEGY.
+    Signal Engine aligned with YOUR manual strategy.
 
-    Strategy Rules (Your Manual Strategy):
-    1. TDI (RSI) in buyer/seller zone (Primary)
-    2. MACD confirmation (Secondary)
-    3. Price touches Bollinger Band (Entry)
-    4. Candles getting smaller (Momentum loss)
-    5. Price moving back inside band (Reversal)
-
-    1H is used for CONTEXT only - NOT for filtering trades.
+    Your Strategy:
+    1. PRIMARY: TDI (RSI) - Trade from green line to 50 line
+    2. SECONDARY: MACD - Confirmation
+    3. CONFIRMATION: BB - Last thing to confirm
+    4. EXIT: TDI hits 50 and rejects
+    5. CONTINUATION: If breaks 50, hold longer
     """
 
     def __init__(self, use_ai: bool = True):
-        """
-        Initialize Signal Engine.
-
-        Args:
-            use_ai: Whether to use AI validation (default: True)
-        """
         self.tdi_detector = TDIDetector()
         self.bb_detector = BBDetector()
         self.cheat_sheet = SignalCheatSheet()
 
-        # Check if AI should be used
+        # AI
         self.use_ai = use_ai and ai_analyzer.enabled if ai_analyzer else False
 
-        # MACD Settings
-        self.macd_fast = getattr(config.strategy, 'macd_fast', 12)
-        self.macd_slow = getattr(config.strategy, 'macd_slow', 26)
-        self.macd_signal = getattr(config.strategy, 'macd_signal', 9)
-        self.require_macd = getattr(config.strategy, 'require_macd_confirmation', True)
-
-        # HTF is for CONTEXT only - NOT a filter
-        self.require_htf_alignment = False  # DISABLED
-
-        self.last_signal = None
-        self.last_signal_time = None
-
-        # Risk parameters
+        # Strategy parameters
+        self.tdi_center_line = getattr(config.strategy, 'tdi_center_line', 50.0)
         self.min_rrr = getattr(config.strategy, 'min_rrr', 1.5)
         self.default_rrr = getattr(config.strategy, 'default_rrr', 2.0)
         self.max_rrr = getattr(config.strategy, 'max_rrr', 4.0)
+        self.min_quality_score = getattr(config.strategy, 'min_quality_score', 50)
 
-        # Grade thresholds
+        # Exit parameters
+        self.max_hold_minutes = 60  # Default max hold
+        self.extension_minutes = 30  # Extra hold if breakout
+
+        # Grade thresholds (lowered for more signals)
         self.grade_a_threshold = getattr(config.strategy, 'grade_a_threshold', 80)
         self.grade_b_threshold = getattr(config.strategy, 'grade_b_threshold', 60)
         self.grade_c_threshold = getattr(config.strategy, 'grade_c_threshold', 50)
-        self.min_quality_score = getattr(config.strategy, 'min_quality_score', 50)
 
-        logger.info(f"🔧 Signal Engine v3.4.2 initialized - AI: {'✅' if self.use_ai else '❌'}")
+        logger.info(f"🔧 Signal Engine v3.4.3 initialized - AI: {'✅' if self.use_ai else '❌'}")
         logger.info(f"   RRR Range: {self.min_rrr} - {self.max_rrr}")
         logger.info(f"   Default RRR: {self.default_rrr}")
-        logger.info(f"   MACD Confirmation: {'✅' if self.require_macd else '❌'}")
-        logger.info(f"   HTF Trend Filter: ❌ DISABLED (Manual strategy)")
-        logger.info(f"   Min Quality Score: {self.min_quality_score}")
+        logger.info(f"   TDI Center Line: {self.tdi_center_line}")
+        logger.info(f"   Strategy: Trade from green line to 50 line")
 
     def process(self, df: pd.DataFrame, symbol: str = "UNKNOWN", htf_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
         """
-        Process data and generate signals with MACD confirmation.
-
-        Args:
-            df: LTF data (5m)
-            symbol: Trading symbol
-            htf_df: HTF data (1h) for CONTEXT only (not used as filter)
-
-        Returns:
-            Signal dictionary or NO_TRADE
+        Process signal aligned with your manual strategy.
         """
         if df is None or df.empty:
-            logger.warning(f"⚠️ {symbol}: No data received")
             return self._no_signal(symbol, "No data")
 
-        # ========== STEP 1: GET TDI OPPORTUNITY ==========
+        # ===== STEP 1: GET TDI OPPORTUNITY (PRIMARY) =====
         tdi_result = self.tdi_detector.detect_opportunity(df)
 
-        # Log TDI result
         logger.debug(f"📊 {symbol} TDI: {tdi_result.get('opportunity')} | Zone: {tdi_result.get('tdi_zone')} | Direction: {tdi_result.get('direction')} | TDI: {tdi_result.get('tdi_level', 50):.1f}")
-        if tdi_result.get('reason'):
-            logger.debug(f"   Reason: {tdi_result.get('reason')}")
 
-        # ========== STEP 2: GET BB INTERACTION ==========
+        # ===== STEP 2: GET BB INTERACTION (CONFIRMATION) =====
         bb_result = self.bb_detector.detect_bb_interaction(df)
 
-        # Log BB result
-        logger.debug(f"📊 {symbol} BB: Position: {bb_result.get('position', 0.5):.2f} | Touch Lower: {bb_result.get('touch_lower', False)} | Touch Upper: {bb_result.get('touch_upper', False)} | Reversal: {bb_result.get('reversal_buy', False) or bb_result.get('reversal_sell', False)}")
+        logger.debug(f"📊 {symbol} BB: Position: {bb_result.get('position', 0.5):.2f} | Touch Lower: {bb_result.get('touch_lower', False)} | Touch Upper: {bb_result.get('touch_upper', False)}")
 
-        # ========== STEP 3: GET MACD CONFIRMATION ==========
+        # ===== STEP 3: GET MACD (SECONDARY) =====
         macd_result = self._check_macd(df)
 
-        # Log MACD result
         if macd_result:
             logger.debug(f"📊 {symbol} MACD: Histogram={macd_result.get('histogram', 0):.4f}, Bullish={macd_result.get('bullish', False)}")
 
-        # ========== STEP 4: CHECK BUY CONDITIONS ==========
-        buy_conditions = self._check_buy_conditions(tdi_result, bb_result, macd_result)
-        buy_ok, buy_reason = buy_conditions
+        # ===== STEP 4: DETERMINE DIRECTION (YOUR STRATEGY) =====
+        direction = self._determine_direction(tdi_result, bb_result, macd_result)
 
-        # Log BUY conditions
-        logger.debug(f"📊 {symbol} BUY Conditions: {buy_ok} - {buy_reason if buy_reason else 'N/A'}")
-
-        # ========== STEP 5: CHECK SELL CONDITIONS ==========
-        sell_conditions = self._check_sell_conditions(tdi_result, bb_result, macd_result)
-        sell_ok, sell_reason = sell_conditions
-
-        # Log SELL conditions
-        logger.debug(f"📊 {symbol} SELL Conditions: {sell_ok} - {sell_reason if sell_reason else 'N/A'}")
-
-        # ========== STEP 6: GENERATE SIGNAL ==========
-        signal_data = None
-
-        if buy_ok:
-            signal_data = self._generate_buy_signal(symbol, df, tdi_result, bb_result, buy_reason, macd_result)
-            logger.info(f"🟢 {symbol}: BUY signal generated - {buy_reason}")
-
-        elif sell_ok:
-            signal_data = self._generate_sell_signal(symbol, df, tdi_result, bb_result, sell_reason, macd_result)
-            logger.info(f"🔴 {symbol}: SELL signal generated - {sell_reason}")
-
-        else:
+        if direction == "NONE":
             tdi_level = tdi_result.get('tdi_level', 50)
             tdi_zone = tdi_result.get('tdi_zone', 'UNKNOWN')
-            reason = f"TDI: {tdi_level:.1f} ({tdi_zone})"
-            return self._no_signal(symbol, reason)
+            return self._no_signal(symbol, f"TDI: {tdi_level:.1f} ({tdi_zone})")
 
-        # ========== STEP 7: QUALITY SCORE VALIDATION ==========
-        quality_score = signal_data.get('quality_score', 0)
-        if quality_score < self.min_quality_score:
-            logger.debug(f"🚫 {symbol}: Quality score {quality_score} below minimum {self.min_quality_score}")
-            return self._no_signal(symbol, f"Quality score too low: {quality_score}")
+        # ===== STEP 5: CHECK CONDITIONS (YOUR STRATEGY) =====
+        conditions_ok, conditions_reason, conditions_met = self._check_conditions(
+            tdi_result, bb_result, macd_result, direction
+        )
 
-        # ========== STEP 8: AI VALIDATION ==========
+        if not conditions_ok:
+            logger.debug(f"📊 {symbol} {direction} rejected: {conditions_reason}")
+            return self._no_signal(symbol, conditions_reason)
+
+        # ===== STEP 6: GENERATE SIGNAL =====
+        if direction == "BUY":
+            signal_data = self._generate_buy_signal(symbol, df, tdi_result, bb_result, macd_result)
+            logger.info(f"🟢 {symbol}: BUY signal - TDI: {tdi_result.get('tdi_level', 50):.1f} (target: 50)")
+        else:
+            signal_data = self._generate_sell_signal(symbol, df, tdi_result, bb_result, macd_result)
+            logger.info(f"🔴 {symbol}: SELL signal - TDI: {tdi_result.get('tdi_level', 50):.1f} (target: 50)")
+
+        if signal_data is None:
+            return self._no_signal(symbol, "Signal generation failed")
+
+        # ===== STEP 7: QUALITY CHECK =====
+        if signal_data.get('quality_score', 0) < self.min_quality_score:
+            logger.debug(f"🚫 {symbol}: Quality score {signal_data.get('quality_score', 0)} below minimum")
+            return self._no_signal(symbol, "Quality score too low")
+
+        # ===== STEP 8: AI VALIDATION =====
         if self.use_ai:
             signal_data = self._apply_ai_validation(symbol, signal_data)
             if signal_data.get('signal') == 'NO_TRADE':
                 return signal_data
 
-        # ========== STEP 9: GENERATE CHEAT SHEET ==========
-        signal_data['cheat_sheet'] = self._generate_ai_enhanced_cheat_sheet(signal_data)
+        # ===== STEP 9: CHEAT SHEET =====
+        signal_data['cheat_sheet'] = self._generate_cheat_sheet(signal_data)
 
         self.last_signal = signal_data
         self.last_signal_time = datetime.now()
 
+        logger.info(f"✅ {symbol}: {direction} signal - TDI: {tdi_result.get('tdi_level', 50):.1f} → Target: 50")
         return signal_data
 
-    def _check_macd(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def _determine_direction(self, tdi_data: Dict, bb_data: Dict, macd_data: Dict) -> str:
+        """
+        Determine direction based on YOUR strategy.
+
+        YOUR STRATEGY:
+        - BUY: TDI below 50 + Green above Red → Trade to 50
+        - SELL: TDI above 50 + Green below Red → Trade down to 50
+        """
+        tdi_level = tdi_data.get('tdi_level', 50)
+        tdi_zone = tdi_data.get('tdi_zone', '')
+        green_above_red = tdi_data.get('green_above_red', False)
+
+        # BUY: TDI below center line (50) with bullish cross
+        if tdi_level < self.tdi_center_line and green_above_red:
+            return "BUY"
+
+        # SELL: TDI above center line (50) with bearish cross
+        if tdi_level > self.tdi_center_line and not green_above_red:
+            return "SELL"
+
+        return "NONE"
+
+    def _check_conditions(self, tdi_data: Dict, bb_data: Dict, macd_data: Dict, direction: str) -> Tuple[bool, str, int]:
+        """
+        Check conditions based on YOUR strategy.
+
+        YOUR STRATEGY:
+        1. TDI in buyer/seller zone (REQUIRED)
+        2. Green above/below Red (REQUIRED)
+        3. MACD confirmation (SECONDARY - preferred)
+        4. BB confirmation (LAST - optional)
+        """
+        conditions_met = 0
+        reasons = []
+
+        tdi_zone = tdi_data.get('tdi_zone', '')
+        tdi_level = tdi_data.get('tdi_level', 50)
+
+        if direction == "BUY":
+            # Condition 1: TDI in buyer zone (REQUIRED)
+            if tdi_zone in ['OVERSOLD', 'SOFT_BUY', 'BUY_ZONE']:
+                conditions_met += 1
+                reasons.append(f"TDI in {tdi_zone} ({tdi_level:.1f})")
+            else:
+                return False, f"TDI not in buyer zone: {tdi_zone}", 0
+
+            # Condition 2: Green above Red (REQUIRED)
+            if tdi_data.get('green_above_red', False):
+                conditions_met += 1
+                reasons.append("Green above Red ✅")
+            else:
+                return False, "Green not above Red", 0
+
+            # Condition 3: MACD (SECONDARY - preferred)
+            if macd_data and macd_data.get('bullish', False):
+                conditions_met += 1
+                reasons.append("MACD bullish ✅")
+
+            # Condition 4: BB (CONFIRMATION - optional)
+            if bb_data.get('touch_lower', False) or bb_data.get('position', 0.5) < 0.35:
+                conditions_met += 1
+                reasons.append("BB near lower ✅")
+            else:
+                reasons.append("BB waiting (optional)")
+
+        else:  # SELL
+            # Condition 1: TDI in seller zone (REQUIRED)
+            if tdi_zone in ['SOFT_SELL', 'OVERBOUGHT', 'SELL_ZONE']:
+                conditions_met += 1
+                reasons.append(f"TDI in {tdi_zone} ({tdi_level:.1f})")
+            else:
+                return False, f"TDI not in seller zone: {tdi_zone}", 0
+
+            # Condition 2: Green below Red (REQUIRED)
+            if not tdi_data.get('green_above_red', True):
+                conditions_met += 1
+                reasons.append("Green below Red ✅")
+            else:
+                return False, "Green not below Red", 0
+
+            # Condition 3: MACD (SECONDARY - preferred)
+            if macd_data and macd_data.get('bearish', False):
+                conditions_met += 1
+                reasons.append("MACD bearish ✅")
+
+            # Condition 4: BB (CONFIRMATION - optional)
+            if bb_data.get('touch_upper', False) or bb_data.get('position', 0.5) > 0.65:
+                conditions_met += 1
+                reasons.append("BB near upper ✅")
+            else:
+                reasons.append("BB waiting (optional)")
+
+        # Minimum 2 conditions (TDI zone + cross) = valid signal
+        # More conditions = better signal
+        return True, " | ".join(reasons), conditions_met
+
+    def _check_macd(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         """Check MACD for confirmation."""
         try:
-            # Calculate MACD if not present
-            if 'macd' not in df.columns:
-                exp1 = df['close'].ewm(span=self.macd_fast, adjust=False).mean()
-                exp2 = df['close'].ewm(span=self.macd_slow, adjust=False).mean()
-                macd = exp1 - exp2
-                signal = macd.ewm(span=self.macd_signal, adjust=False).mean()
-                histogram = macd - signal
-            else:
-                macd = df['macd']
-                signal = df['macd_signal']
-                histogram = df['macd_histogram']
+            if 'macd' not in df.columns or 'macd_signal' not in df.columns:
+                return None
 
-            last_macd = macd.iloc[-1]
-            last_signal = signal.iloc[-1]
-            last_hist = histogram.iloc[-1]
-            prev_hist = histogram.iloc[-2] if len(histogram) > 1 else last_hist
+            last = df.iloc[-1]
+            prev = df.iloc[-2] if len(df) > 1 else last
 
-            # Bullish: MACD above signal AND histogram rising
-            bullish = last_macd > last_signal and last_hist > prev_hist
-
-            # Bearish: MACD below signal AND histogram falling
-            bearish = last_macd < last_signal and last_hist < prev_hist
+            macd = last.get('macd', 0)
+            signal = last.get('macd_signal', 0)
+            histogram = last.get('macd_histogram', 0)
+            prev_histogram = prev.get('macd_histogram', 0)
 
             return {
-                'macd': last_macd,
-                'signal': last_signal,
-                'histogram': last_hist,
-                'prev_histogram': prev_hist,
-                'bullish': bullish,
-                'bearish': bearish,
-                'above_signal': last_macd > last_signal,
-                'hist_rising': last_hist > prev_hist,
-                'hist_falling': last_hist < prev_hist,
+                'macd': macd,
+                'signal': signal,
+                'histogram': histogram,
+                'prev_histogram': prev_histogram,
+                'bullish': macd > signal and histogram > prev_histogram,
+                'bearish': macd < signal and histogram < prev_histogram,
+                'above_signal': macd > signal,
+                'hist_rising': histogram > prev_histogram,
             }
-
         except Exception as e:
-            logger.debug(f"MACD calculation error: {e}")
+            logger.debug(f"MACD check error: {e}")
             return None
 
-    def _check_buy_conditions(self, tdi_data: Dict, bb_data: Dict, macd_data: Dict) -> Tuple[bool, str]:
-        """Check all BUY conditions."""
-        conditions = []
-
-        # Condition 1: TDI in buyer zone
-        tdi_zone = tdi_data.get('tdi_zone', '')
-        if tdi_zone in ['OVERSOLD', 'SOFT_BUY', 'BUY_ZONE']:
-            conditions.append("TDI buyer zone")
-        else:
-            return False, f"TDI not in buyer zone: {tdi_zone}"
-
-        # Condition 2: BB touch lower or near lower
-        if bb_data.get('touch_lower', False) or bb_data.get('position', 0.5) < 0.30:
-            conditions.append("BB touch lower")
-        else:
-            return False, f"BB not touching lower: {bb_data.get('position', 0.5):.2f}"
-
-        # Condition 3: Reversal confirmed
-        if bb_data.get('reversal_buy', False):
-            conditions.append("Reversal confirmed")
-        else:
-            return False, "No reversal confirmation"
-
-        # Condition 4: Candles shrinking (momentum loss)
-        if bb_data.get('candles_shrinking', False):
-            conditions.append("Candles shrinking")
-        # Not required for your strategy but adds confidence
-
-        # Condition 5: MACD confirmation
-        if self.require_macd and macd_data:
-            if macd_data.get('bullish', False):
-                conditions.append("MACD bullish")
-            else:
-                return False, "MACD not bullish"
-        elif self.require_macd and not macd_data:
-            return False, "MACD data unavailable"
-
-        return True, f"✅ {len(conditions)} conditions: " + " | ".join(conditions)
-
-    def _check_sell_conditions(self, tdi_data: Dict, bb_data: Dict, macd_data: Dict) -> Tuple[bool, str]:
-        """Check all SELL conditions."""
-        conditions = []
-
-        # Condition 1: TDI in seller zone
-        tdi_zone = tdi_data.get('tdi_zone', '')
-        if tdi_zone in ['OVERBOUGHT', 'SOFT_SELL']:
-            conditions.append("TDI seller zone")
-        else:
-            return False, f"TDI not in seller zone: {tdi_zone}"
-
-        # Condition 2: BB touch upper or near upper
-        if bb_data.get('touch_upper', False) or bb_data.get('position', 0.5) > 0.70:
-            conditions.append("BB touch upper")
-        else:
-            return False, f"BB not touching upper: {bb_data.get('position', 0.5):.2f}"
-
-        # Condition 3: Reversal confirmed
-        if bb_data.get('reversal_sell', False):
-            conditions.append("Reversal confirmed")
-        else:
-            return False, "No reversal confirmation"
-
-        # Condition 4: Candles shrinking
-        if bb_data.get('candles_shrinking', False):
-            conditions.append("Candles shrinking")
-
-        # Condition 5: MACD confirmation
-        if self.require_macd and macd_data:
-            if macd_data.get('bearish', False):
-                conditions.append("MACD bearish")
-            else:
-                return False, "MACD not bearish"
-        elif self.require_macd and not macd_data:
-            return False, "MACD data unavailable"
-
-        return True, f"✅ {len(conditions)} conditions: " + " | ".join(conditions)
-
     def _generate_buy_signal(self, symbol: str, df: pd.DataFrame,
-                             tdi_data: Dict, bb_data: Dict,
-                             reason: str, macd_data: Dict) -> Dict[str, Any]:
-        """Generate BUY signal."""
+                             tdi_data: Dict, bb_data: Dict, macd_data: Dict) -> Dict[str, Any]:
+        """Generate BUY signal - Trade from green line to 50."""
         last = df.iloc[-1]
         current_price = last.get('close', 0)
         atr = self._calculate_atr(df)
 
-        # Calculate SL/TP
+        # Entry TDI level
+        entry_tdi = tdi_data.get('tdi_level', 50)
+
+        # Target is TDI 50 line
+        target_tdi = self.tdi_center_line
+
+        # Calculate SL/TP based on ATR
         stop_loss = current_price - (1.5 * atr) if atr > 0 else current_price * 0.985
         take_profit = current_price + (self.default_rrr * (current_price - stop_loss))
 
@@ -303,11 +283,9 @@ class SignalEngine:
         rrr = reward / risk if risk > 0 else self.default_rrr
         rrr = min(self.max_rrr, max(self.min_rrr, rrr))
 
-        # Calculate quality score
-        quality_score = self._calculate_quality_score(tdi_data, bb_data, macd_data)
-
-        # Determine signal strength
-        signal_strength = self._determine_strength(tdi_data, quality_score)
+        # Quality score
+        quality_score = self._calculate_quality_score(tdi_data, bb_data, macd_data, "BUY")
+        grade = self._get_grade(quality_score)
 
         return {
             'symbol': symbol,
@@ -319,49 +297,63 @@ class SignalEngine:
             'rrr': rrr,
             'confidence': 0.7,
             'quality_score': quality_score,
-            'total_score': quality_score,
-            'grade': self._get_grade(quality_score),
-            'tdi_level': tdi_data.get('tdi_level', 50),
+            'grade': grade,
+            # TDI
+            'tdi_level': entry_tdi,
             'tdi_zone': tdi_data.get('tdi_zone', 'UNKNOWN'),
             'tdi_zone_description': tdi_data.get('tdi_zone_description', ''),
             'tdi_bullish_cross': tdi_data.get('bullish_cross', False),
             'tdi_fast': tdi_data.get('tdi_fast', 50),
             'tdi_slow': tdi_data.get('tdi_slow', 50),
+            'green_above_red': tdi_data.get('green_above_red', False),
+            # BB
             'bb_position': bb_data.get('position', 0.5),
             'touch_lower': bb_data.get('touch_lower', False),
             'touch_upper': bb_data.get('touch_upper', False),
             'candles_shrinking': bb_data.get('candles_shrinking', False),
-            'reversal_confirm': bb_data.get('reversal_buy', False),
-            'signal_strength': signal_strength,
-            'risk_multiplier': 1.0,
-            'reason': reason,
+            # MACD
+            'macd_bullish': macd_data.get('bullish', False) if macd_data else False,
+            'macd_histogram': macd_data.get('histogram', 0) if macd_data else 0,
+            'macd_above_signal': macd_data.get('above_signal', False) if macd_data else False,
+            # Strategy specific
+            'entry_tdi': entry_tdi,
+            'target_tdi': target_tdi,
+            'strategy_type': 'REVERSAL_TO_50',
+            # Conditions
+            'conditions_met': 0,
+            'conditions_total': 4,
+            'condition_1_tdi_zone': tdi_data.get('tdi_zone') in ['OVERSOLD', 'SOFT_BUY', 'BUY_ZONE'],
+            'condition_2_tdi_cross': tdi_data.get('green_above_red', False),
+            'condition_3_bb_touch': bb_data.get('touch_lower', False) or bb_data.get('position', 0.5) < 0.35,
+            'condition_4_candles_shrinking': bb_data.get('candles_shrinking', False),
+            # Timestamp
             'timestamp': datetime.now().isoformat(),
             'cheat_sheet': None,
             'ai_decision': 'PENDING',
             'ai_reasoning': 'Awaiting AI analysis...',
             'ai_confidence': 0.0,
             'ai_analysis': {},
-            # MACD
-            'macd_bullish': macd_data.get('bullish', False) if macd_data else False,
-            'macd_histogram': macd_data.get('histogram', 0) if macd_data else 0,
-            'macd_above_signal': macd_data.get('above_signal', False) if macd_data else False,
-            # 5 Conditions tracking
-            'condition_1_tdi_zone': tdi_data.get('tdi_zone') in ['OVERSOLD', 'SOFT_BUY', 'BUY_ZONE'],
-            'condition_2_tdi_cross': tdi_data.get('bullish_cross', False),
-            'condition_3_bb_touch': bb_data.get('touch_lower', False) or bb_data.get('position', 0.5) < 0.30,
-            'condition_4_candles_shrinking': bb_data.get('candles_shrinking', False),
-            'condition_5_reversal_confirm': bb_data.get('reversal_buy', False),
+            # Exit tracking
+            'tdi_50_reached': False,
+            'tdi_50_rejected': False,
+            'tdi_50_broken': False,
+            'max_hold_minutes': 60,
         }
 
     def _generate_sell_signal(self, symbol: str, df: pd.DataFrame,
-                              tdi_data: Dict, bb_data: Dict,
-                              reason: str, macd_data: Dict) -> Dict[str, Any]:
-        """Generate SELL signal."""
+                              tdi_data: Dict, bb_data: Dict, macd_data: Dict) -> Dict[str, Any]:
+        """Generate SELL signal - Trade from red line down to 50."""
         last = df.iloc[-1]
         current_price = last.get('close', 0)
         atr = self._calculate_atr(df)
 
-        # Calculate SL/TP
+        # Entry TDI level
+        entry_tdi = tdi_data.get('tdi_level', 50)
+
+        # Target is TDI 50 line
+        target_tdi = self.tdi_center_line
+
+        # Calculate SL/TP based on ATR
         stop_loss = current_price + (1.5 * atr) if atr > 0 else current_price * 1.015
         take_profit = current_price - (self.default_rrr * (stop_loss - current_price))
 
@@ -371,11 +363,9 @@ class SignalEngine:
         rrr = reward / risk if risk > 0 else self.default_rrr
         rrr = min(self.max_rrr, max(self.min_rrr, rrr))
 
-        # Calculate quality score
-        quality_score = self._calculate_quality_score(tdi_data, bb_data, macd_data)
-
-        # Determine signal strength
-        signal_strength = self._determine_strength(tdi_data, quality_score)
+        # Quality score
+        quality_score = self._calculate_quality_score(tdi_data, bb_data, macd_data, "SELL")
+        grade = self._get_grade(quality_score)
 
         return {
             'symbol': symbol,
@@ -387,90 +377,78 @@ class SignalEngine:
             'rrr': rrr,
             'confidence': 0.7,
             'quality_score': quality_score,
-            'total_score': quality_score,
-            'grade': self._get_grade(quality_score),
-            'tdi_level': tdi_data.get('tdi_level', 50),
+            'grade': grade,
+            # TDI
+            'tdi_level': entry_tdi,
             'tdi_zone': tdi_data.get('tdi_zone', 'UNKNOWN'),
             'tdi_zone_description': tdi_data.get('tdi_zone_description', ''),
             'tdi_bearish_cross': tdi_data.get('bearish_cross', False),
             'tdi_fast': tdi_data.get('tdi_fast', 50),
             'tdi_slow': tdi_data.get('tdi_slow', 50),
+            'green_above_red': tdi_data.get('green_above_red', False),
+            # BB
             'bb_position': bb_data.get('position', 0.5),
             'touch_lower': bb_data.get('touch_lower', False),
             'touch_upper': bb_data.get('touch_upper', False),
             'candles_shrinking': bb_data.get('candles_shrinking', False),
-            'reversal_confirm': bb_data.get('reversal_sell', False),
-            'signal_strength': signal_strength,
-            'risk_multiplier': 1.0,
-            'reason': reason,
+            # MACD
+            'macd_bearish': macd_data.get('bearish', False) if macd_data else False,
+            'macd_histogram': macd_data.get('histogram', 0) if macd_data else 0,
+            'macd_below_signal': not macd_data.get('above_signal', True) if macd_data else False,
+            # Strategy specific
+            'entry_tdi': entry_tdi,
+            'target_tdi': target_tdi,
+            'strategy_type': 'REVERSAL_TO_50',
+            # Conditions
+            'conditions_met': 0,
+            'conditions_total': 4,
+            'condition_1_tdi_zone': tdi_data.get('tdi_zone') in ['SOFT_SELL', 'OVERBOUGHT', 'SELL_ZONE'],
+            'condition_2_tdi_cross': not tdi_data.get('green_above_red', True),
+            'condition_3_bb_touch': bb_data.get('touch_upper', False) or bb_data.get('position', 0.5) > 0.65,
+            'condition_4_candles_shrinking': bb_data.get('candles_shrinking', False),
+            # Timestamp
             'timestamp': datetime.now().isoformat(),
             'cheat_sheet': None,
             'ai_decision': 'PENDING',
             'ai_reasoning': 'Awaiting AI analysis...',
             'ai_confidence': 0.0,
             'ai_analysis': {},
-            # MACD
-            'macd_bearish': macd_data.get('bearish', False) if macd_data else False,
-            'macd_histogram': macd_data.get('histogram', 0) if macd_data else 0,
-            'macd_below_signal': not macd_data.get('above_signal', True) if macd_data else False,
-            # 5 Conditions tracking
-            'condition_1_tdi_zone': tdi_data.get('tdi_zone') in ['OVERBOUGHT', 'SOFT_SELL'],
-            'condition_2_tdi_cross': tdi_data.get('bearish_cross', False),
-            'condition_3_bb_touch': bb_data.get('touch_upper', False) or bb_data.get('position', 0.5) > 0.70,
-            'condition_4_candles_shrinking': bb_data.get('candles_shrinking', False),
-            'condition_5_reversal_confirm': bb_data.get('reversal_sell', False),
+            # Exit tracking
+            'tdi_50_reached': False,
+            'tdi_50_rejected': False,
+            'tdi_50_broken': False,
+            'max_hold_minutes': 60,
         }
 
-    def _calculate_quality_score(self, tdi_data: Dict, bb_data: Dict, macd_data: Dict = None) -> int:
-        """Calculate quality score (0-100) with MACD bonus."""
+    def _calculate_quality_score(self, tdi_data: Dict, bb_data: Dict, macd_data: Dict, direction: str) -> int:
+        """Calculate quality score based on YOUR strategy."""
         score = 50  # Base score
 
         # TDI zone bonus
         zone = tdi_data.get('tdi_zone', '')
         if zone in ['OVERSOLD', 'OVERBOUGHT']:
-            score += 15
+            score += 20  # Hard signal
         elif zone in ['SOFT_BUY', 'SOFT_SELL']:
-            score += 10
-        elif zone in ['BUY_ZONE', 'SELL_ZONE']:
-            score += 5
-
-        # Crossover bonus
-        if tdi_data.get('bullish_cross', False) or tdi_data.get('bearish_cross', False):
-            score += 10
-
-        # BB position bonus
-        position = bb_data.get('position', 0.5)
-        if position < 0.15 or position > 0.85:
             score += 15
-        elif position < 0.30 or position > 0.70:
+        elif zone in ['BUY_ZONE', 'SELL_ZONE']:
             score += 10
 
-        # Reversal bonus
-        if bb_data.get('reversal_buy', False) or bb_data.get('reversal_sell', False):
-            score += 10
-
-        # Candles shrinking bonus
-        if bb_data.get('candles_shrinking', False):
-            score += 5
+        # Green/Red cross bonus
+        if tdi_data.get('bullish_cross', False) or tdi_data.get('bearish_cross', False):
+            score += 15
 
         # MACD bonus
         if macd_data:
-            if macd_data.get('bullish', False) or macd_data.get('bearish', False):
+            if (direction == "BUY" and macd_data.get('bullish', False)) or \
+               (direction == "SELL" and macd_data.get('bearish', False)):
                 score += 10
-            if macd_data.get('hist_rising', False) or macd_data.get('hist_falling', False):
-                score += 5
+
+        # BB bonus
+        position = bb_data.get('position', 0.5)
+        if (direction == "BUY" and position < 0.25) or (direction == "SELL" and position > 0.75):
+            score += 10
 
         return min(100, max(0, score))
-
-    def _determine_strength(self, tdi_data: Dict, quality_score: int) -> str:
-        """Determine signal strength."""
-        zone = tdi_data.get('tdi_zone', '')
-        if zone in ['OVERSOLD', 'OVERBOUGHT'] and quality_score >= 70:
-            return "HARD"
-        elif zone in ['SOFT_BUY', 'SOFT_SELL'] and quality_score >= 60:
-            return "SOFT"
-        else:
-            return "SOFT"
 
     def _get_grade(self, score: int) -> str:
         """Get grade based on score."""
@@ -487,39 +465,85 @@ class SignalEngine:
         else:
             return "D"
 
-    def _generate_ai_enhanced_cheat_sheet(self, signal_data: Dict[str, Any]) -> str:
-        """Generate cheat sheet with AI insights."""
-        direction = signal_data.get('direction', 'NONE')
+    def _generate_cheat_sheet(self, signal_data: Dict[str, Any]) -> str:
+        """Generate cheat sheet aligned with YOUR strategy."""
+        direction = signal_data.get('direction', 'UNKNOWN')
+        symbol = signal_data.get('symbol', 'UNKNOWN')
+        tdi_level = signal_data.get('tdi_level', 50)
+        target_tdi = signal_data.get('target_tdi', 50)
+
+        lines = []
+        lines.append(f"{'🟢' if direction == 'BUY' else '🔴'} <b>{direction} SIGNAL</b> - {symbol}")
+        lines.append("📋 <b>Strategy: Trade to 50 Line</b>")
+        lines.append("")
 
         if direction == 'BUY':
-            base = self.cheat_sheet.generate_buy_cheat_sheet(signal_data)
-        elif direction == 'SELL':
-            base = self.cheat_sheet.generate_sell_cheat_sheet(signal_data)
-        else:
-            return self.cheat_sheet.generate_wait_cheat_sheet(signal_data)
+            lines.append(f"📊 TDI Entry: <b>{tdi_level:.1f}</b> (below 50)")
+            lines.append(f"🎯 Target: <b>TDI 50 line</b>")
+            lines.append(f"✅ Green line crossed ABOVE Red (Bulls taking over)")
+            lines.append(f"📈 MACD: {'✅ BULLISH' if signal_data.get('macd_bullish', False) else '⏳ NEUTRAL'}")
+            lines.append(f"📊 BB: {'✅ Near lower band' if signal_data.get('touch_lower', False) or signal_data.get('bb_position', 0.5) < 0.35 else '⏳ Waiting'}")
+            lines.append("")
+            lines.append("⏰ <b>Exit Rules:</b>")
+            lines.append("• Exit when TDI hits 50 and rejects")
+            lines.append("• Hold longer if TDI breaks above 50 (continuation)")
+            lines.append("• Max hold: 60 minutes")
 
-        # Add MACD info
-        macd_section = f"""
-📊 <b>MACD Confirmation</b>
-• Bullish: {'✅' if signal_data.get('macd_bullish', False) else '❌'}
-• Histogram: {signal_data.get('macd_histogram', 0):.4f}
-• Above Signal: {'✅' if signal_data.get('macd_above_signal', False) else '❌'}"""
+        else:  # SELL
+            lines.append(f"📊 TDI Entry: <b>{tdi_level:.1f}</b> (above 50)")
+            lines.append(f"🎯 Target: <b>TDI 50 line</b>")
+            lines.append(f"✅ Green line crossed BELOW Red (Bears taking over)")
+            lines.append(f"📉 MACD: {'✅ BEARISH' if signal_data.get('macd_bearish', False) else '⏳ NEUTRAL'}")
+            lines.append(f"📊 BB: {'✅ Near upper band' if signal_data.get('touch_upper', False) or signal_data.get('bb_position', 0.5) > 0.65 else '⏳ Waiting'}")
+            lines.append("")
+            lines.append("⏰ <b>Exit Rules:</b>")
+            lines.append("• Exit when TDI hits 50 and rejects")
+            lines.append("• Hold longer if TDI breaks below 50 (continuation)")
+            lines.append("• Max hold: 60 minutes")
 
-        # Add AI insights if available
-        ai_data = signal_data.get('ai_analysis', {})
-        if ai_data and ai_data.get('decision'):
-            ai_section = f"""
-🤖 <b>AI Analysis (Groq)</b>
-• Decision: <b>{ai_data.get('decision', 'UNKNOWN')}</b>
-• Confidence: <b>{ai_data.get('confidence', 0)*100:.0f}%</b>
-• Reasoning: {ai_data.get('reasoning', 'N/A')}"""
+        # Add trade details
+        lines.append("")
+        lines.append("📊 <b>Trade Details</b>")
+        lines.append(f"• Entry: ${signal_data.get('entry_price', 0):.4f}")
+        lines.append(f"• SL: ${signal_data.get('stop_loss', 0):.4f}")
+        lines.append(f"• TP: ${signal_data.get('take_profit', 0):.4f}")
+        lines.append(f"• RRR: {signal_data.get('rrr', 0):.1f}")
+        lines.append(f"• Grade: {signal_data.get('grade', 'C')}")
 
-            if ai_data.get('market_analysis'):
-                ai_section += f"\n• Market: {ai_data.get('market_analysis')}"
+        return "\n".join(lines)
 
-            return base + "\n\n" + macd_section + "\n\n" + ai_section
+    def _apply_ai_validation(self, symbol: str, signal_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply AI validation."""
+        if not self.use_ai:
+            return signal_data
 
-        return base + "\n\n" + macd_section
+        try:
+            logger.info(f"🤖 {symbol}: Requesting AI analysis...")
+            ai_result = ai_analyzer.analyze_signal(signal_data)
+
+            signal_data['ai_decision'] = ai_result.decision
+            signal_data['ai_reasoning'] = ai_result.reasoning
+            signal_data['ai_confidence'] = ai_result.confidence
+
+            if ai_result.decision == 'REJECT':
+                signal_data['signal'] = 'NO_TRADE'
+                signal_data['direction'] = 'NONE'
+                logger.info(f"🚫 {symbol}: AI REJECTED - {ai_result.reasoning}")
+                return signal_data
+
+            if ai_result.decision == 'WAIT':
+                signal_data['signal'] = 'NO_TRADE'
+                signal_data['direction'] = 'NONE'
+                logger.info(f"⏳ {symbol}: AI WAIT - {ai_result.reasoning}")
+                return signal_data
+
+            logger.info(f"✅ {symbol}: AI APPROVED - Confidence: {ai_result.confidence:.0%}")
+
+        except Exception as e:
+            logger.error(f"❌ {symbol}: AI validation error: {e}")
+            signal_data['ai_decision'] = 'ERROR'
+
+        return signal_data
 
     def _no_signal(self, symbol: str, reason: str) -> Dict[str, Any]:
         """Return no signal result."""
@@ -529,15 +553,10 @@ class SignalEngine:
             'direction': 'NONE',
             'reason': reason,
             'timestamp': datetime.now().isoformat(),
-            'cheat_sheet': self.cheat_sheet.generate_wait_cheat_sheet({
-                'symbol': symbol,
-                'tdi_level': 50,
-                'reason': reason
-            }),
+            'cheat_sheet': f"⏳ WAIT - {symbol}\n💬 {reason}",
             'ai_decision': 'NONE',
             'ai_reasoning': 'No signal to analyze',
             'ai_confidence': 0.0,
-            'ai_analysis': {},
         }
 
     def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
@@ -560,65 +579,14 @@ class SignalEngine:
             logger.debug(f"ATR calculation error: {e}")
             return df['close'].iloc[-1] * 0.01 if not df.empty else 0
 
-    def _apply_ai_validation(self, symbol: str, signal_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply AI validation to signal."""
-        try:
-            logger.info(f"🤖 {symbol}: Requesting AI analysis...")
-
-            ai_result = ai_analyzer.analyze_signal(signal_data)
-
-            signal_data['ai_analysis'] = {
-                'decision': ai_result.decision,
-                'confidence': ai_result.confidence,
-                'reasoning': ai_result.reasoning,
-                'signal_strength': ai_result.signal_strength,
-                'risk_level': ai_result.risk_level,
-                'suggested_rrr': ai_result.suggested_rrr,
-                'market_analysis': ai_result.market_analysis,
-                'technical_factors': ai_result.technical_factors,
-                'risk_factors': ai_result.risk_factors,
-                'response_time_ms': ai_result.response_time_ms,
-                'ai_validated': ai_result.ai_validated,
-            }
-
-            signal_data['ai_decision'] = ai_result.decision
-            signal_data['ai_reasoning'] = ai_result.reasoning
-            signal_data['ai_confidence'] = ai_result.confidence
-
-            if ai_result.decision == 'REJECT':
-                signal_data['signal'] = 'NO_TRADE'
-                signal_data['direction'] = 'NONE'
-                logger.info(f"🚫 {symbol}: AI REJECTED - {ai_result.reasoning}")
-                return signal_data
-
-            if ai_result.decision == 'WAIT':
-                signal_data['signal'] = 'NO_TRADE'
-                signal_data['direction'] = 'NONE'
-                logger.info(f"⏳ {symbol}: AI WAIT - {ai_result.reasoning}")
-                return signal_data
-
-            logger.info(f"✅ {symbol}: AI APPROVED - Confidence: {ai_result.confidence:.0%}")
-
-            return signal_data
-
-        except Exception as e:
-            logger.error(f"❌ {symbol}: AI validation error: {e}")
-            signal_data['ai_decision'] = 'ERROR'
-            signal_data['ai_reasoning'] = f"AI Error: {str(e)}"
-            signal_data['ai_confidence'] = 0.0
-            return signal_data
-
     def get_stats(self) -> Dict[str, Any]:
         """Get engine statistics."""
         return {
-            'last_signal': self.last_signal,
-            'last_signal_time': self.last_signal_time,
+            'version': '3.4.3',
+            'strategy': 'Trade to 50 Line',
             'use_ai': self.use_ai,
             'min_rrr': self.min_rrr,
             'default_rrr': self.default_rrr,
             'max_rrr': self.max_rrr,
-            'require_macd': self.require_macd,
-            'require_htf_alignment': False,
-            'min_quality_score': self.min_quality_score,
-            'version': '3.4.2'
+            'tdi_center_line': self.tdi_center_line,
         }

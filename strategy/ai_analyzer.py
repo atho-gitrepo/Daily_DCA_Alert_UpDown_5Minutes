@@ -1,7 +1,7 @@
 """
 Groq AI Analyzer - Intelligent Signal Validation
 Provides AI-powered analysis and reasoning for trade signals.
-Version: 3.4.2 - ADDED: MACD awareness for enhanced analysis
+Version: 3.4.1 - ADDED: MACD awareness for enhanced analysis
 """
 
 import json
