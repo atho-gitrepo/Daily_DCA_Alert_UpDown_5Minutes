@@ -1,32 +1,29 @@
 """
-MongoDB Client for Trading Bot - SUPER TDI + SUPER BOLLINGER BANDS STRATEGY.
-ALIGNED: Super TDI + Super BB strategy with condition tracking.
-Version: 3.4.1 - ALIGNED: Super TDI + Super BB strategy support
+MongoDB Client for Trading Bot - Super TDI + MACD + Super BB Strategy
+Version: 3.4.1 - FIXED: numpy bool serialization issue
 """
 
 import os
 import logging
-import json
-from typing import Optional, Dict, Any, List, Tuple
-from datetime import datetime
-from urllib.parse import quote_plus
 import time
+from typing import Optional, Dict, Any, List
+from datetime import datetime
+import json
 
-# MongoDB imports
 try:
-    from pymongo import MongoClient, ASCENDING, DESCENDING
-    from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, DuplicateKeyError, OperationFailure, ConfigurationError
-    MONGODB_AVAILABLE = True
-except ImportError as e:
-    MONGODB_AVAILABLE = False
-    logging.warning(f"pymongo not available: {e}")
+    from pymongo import MongoClient
+    from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, OperationFailure
+    from bson import json_util
+    PYMONGO_AVAILABLE = True
+except ImportError:
+    PYMONGO_AVAILABLE = False
+    MongoClient = None
+    ConnectionFailure = None
+    ServerSelectionTimeoutError = None
+    OperationFailure = None
+    json_util = None
 
-# Local imports
-from settings import config
-
-# Configure logging
 logger = logging.getLogger(__name__)
-mongo_logger = logging.getLogger("mongodb")
 
 EMOJI = {
     "START": "🚀",
@@ -34,894 +31,379 @@ EMOJI = {
     "ERROR": "❌",
     "WARNING": "⚠️",
     "INFO": "ℹ️",
-    "DEBUG": "🔍",
     "DB": "💾",
-    "SAVE": "💾",
-    "DELETE": "🗑️",
-    "UPDATE": "🔄",
-    "FIND": "🔍",
-    "INDEX": "📊",
-    "AUTH": "🔐",
-    "RAILWAY": "🚂",
-    "ACTIVE": "🔴",
-    "RESOLVED": "✅",
-    "TDI": "📈",
-    "BB": "📊",
-    "CONDITION": "✅",
+    "MONGODB": "🍃",
 }
+
+
+def convert_numpy_types(obj):
+    """
+    Recursively convert numpy types to Python native types for MongoDB serialization.
+    """
+    import numpy as np
+
+    if isinstance(obj, dict):
+        return {k: convert_numpy_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_numpy_types(item) for item in obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.int_):
+        return int(obj)
+    elif isinstance(obj, np.float_):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.datetime64):
+        return obj.astype(datetime)
+    elif isinstance(obj, pd.Series):
+        return obj.tolist()
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict('records')
+    else:
+        return obj
 
 
 class MongoDBClient:
     """
-    MongoDB Client for Super TDI + Super Bollinger Bands strategy.
-    Supports condition tracking and cheat sheet storage.
+    MongoDB client for storing trading signals.
     """
 
     def __init__(self):
         self.client = None
         self.db = None
-        self.initialized = False
-        self.version = "3.4.1"
+        self.enabled = False
         self._connected = False
-        self._last_error = None
-        self._connection_attempts = 0
 
-        # Collection names
-        self.ACTIVE_COLLECTION = "active_signals"
-        self.RESOLVED_COLLECTION = "resolved_signals"
-        self.SIGNALS_COLLECTION = "signals"  # Archive/backup collection
-        self.STATS_COLLECTION = "bot_stats"
-        self.ERRORS_COLLECTION = "errors"
+        # Load config
+        self.uri = self._get_uri()
+        self.db_name = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "trading_bot_dca"))
+        self.active_collection = os.getenv("MONGODB_ACTIVE_COLLECTION", "active_signals")
+        self.resolved_collection = os.getenv("MONGODB_RESOLVED_COLLECTION", "resolved_signals")
+        self.archive_collection = os.getenv("MONGODB_ARCHIVE_COLLECTION", "archive_signals")
 
-        # Metrics
-        self.metrics = {
-            "active_deletions": 0,
-            "active_updates": 0,
-            "resolved_saves": 0,
-            "archive_saves": 0,
-            "errors": 0,
-            "signals_saved": 0,
-        }
+        # Connection settings
+        self.max_retries = 5
+        self.retry_delay = 2
+        self.connect_timeout = 5000
 
-        self._initialize()
-
-    def _initialize(self):
-        """Initialize MongoDB connection."""
-        try:
-            mongo_logger.info(f"{EMOJI['START']} MONGODB_INIT: START")
-            mongo_logger.info(f"{EMOJI['RAILWAY']} MONGODB_INIT: Running on Railway")
-
-            self.mongo_uri = self._get_mongo_uri()
-
-            if not self.mongo_uri:
-                mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_INIT: No MongoDB URI found. Running in memory-only mode.")
-                self.initialized = False
-                return
-
-            self.db_name = self._get_db_name()
-
-            redacted_uri = self._redact_uri(self.mongo_uri)
-            mongo_logger.info(f"{EMOJI['INFO']} MONGODB_INIT: Connecting to {redacted_uri}")
-            mongo_logger.info(f"{EMOJI['INFO']} MONGODB_INIT: Database: {self.db_name}")
-
+        if self.uri:
             self._connect()
-            self._create_indexes()
-
-            self.initialized = True
-            self._connected = True
-
-            mongo_logger.info(f"{EMOJI['SUCCESS']} MONGODB_INIT: Connected to MongoDB")
-            mongo_logger.info(f"{EMOJI['DB']} Database: {self.db_name}")
-            mongo_logger.info(f"{EMOJI['SUCCESS']} MONGODB_INIT v{self.version}: Client initialized")
-            mongo_logger.info(f"{EMOJI['DELETE']} Active signals will be COMPLETELY DELETED when resolved")
-
-        except OperationFailure as e:
-            error_msg = str(e)
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_INIT: Authentication failed - {error_msg}")
-            self.initialized = False
-            self._connected = False
-            self._last_error = error_msg
-
-        except ConnectionFailure as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_INIT: Connection failed - {e}")
-            self.initialized = False
-            self._connected = False
-            self._last_error = str(e)
-
-        except ServerSelectionTimeoutError as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_INIT: Server selection timeout - {e}")
-            self.initialized = False
-            self._connected = False
-            self._last_error = str(e)
-
-        except Exception as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_INIT: Failed - {e}")
-            self.initialized = False
-            self._connected = False
-            self._last_error = str(e)
-
-    def _redact_uri(self, uri: str) -> str:
-        """Redact sensitive parts of URI for logging."""
-        if not uri:
-            return "None"
-        import re
-        redacted = re.sub(r'://[^@]+@', '://***:***@', uri)
-        return redacted
-
-    def _get_mongo_uri(self) -> str:
-        """Get MongoDB URI from environment or config."""
-        mongo_uri = None
-
-        env_vars = [
-            'MONGODB_URI',
-            'MONGODB_URL',
-            'MONGO_URI',
-            'MONGO_URL',
-            'RAILWAY_MONGODB_URI',
-            'RAILWAY_MONGODB_URL'
-        ]
-
-        for var in env_vars:
-            value = os.environ.get(var)
-            if value:
-                mongo_uri = value
-                mongo_logger.debug(f"{EMOJI['DEBUG']} Found {var}")
-                break
-
-        if not mongo_uri:
-            try:
-                mongo_uri = getattr(config, 'mongodb_uri', None)
-                if mongo_uri:
-                    mongo_logger.debug(f"{EMOJI['DEBUG']} Found in config.mongodb_uri")
-            except:
-                pass
-
-        if not mongo_uri:
-            mongo_uri = self._build_uri_from_components()
-
-        if mongo_uri:
-            mongo_logger.info(f"{EMOJI['INFO']} MONGODB URI found: {self._redact_uri(mongo_uri)}")
         else:
-            mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB URI not found")
+            logger.warning(f"{EMOJI['WARNING']} MONGODB: No URI provided - disabled")
 
-        return mongo_uri
+    def _get_uri(self) -> str:
+        """Get MongoDB URI from environment or config."""
+        # Try various environment variables
+        uri = os.getenv("MONGODB_URI", "")
+        if uri:
+            return uri
 
-    def _build_uri_from_components(self) -> Optional[str]:
-        """Build MongoDB URI from individual components."""
-        try:
-            host = os.environ.get('MONGODB_HOST', os.environ.get('MONGO_HOST', 'mongodb.railway.internal'))
-            port = os.environ.get('MONGODB_PORT', os.environ.get('MONGO_PORT', '27017'))
-            user = os.environ.get('MONGODB_USER', os.environ.get('MONGO_USER'))
-            password = os.environ.get('MONGODB_PASSWORD', os.environ.get('MONGO_PASS'))
-            db_name = self._get_db_name()
+        uri = os.getenv("MONGODB_URL", "")
+        if uri:
+            return uri
 
-            if not host:
-                return None
+        # Build from parts
+        host = os.getenv("MONGODB_HOST", os.getenv("MONGO_HOST", "localhost"))
+        port = int(os.getenv("MONGODB_PORT", os.getenv("MONGO_PORT", "27017")))
+        user = os.getenv("MONGODB_USER", os.getenv("MONGO_USER", ""))
+        password = os.getenv("MONGODB_PASSWORD", os.getenv("MONGO_PASS", ""))
+        db_name = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "trading_bot"))
 
-            if 'railway.internal' in host:
-                mongo_logger.info(f"{EMOJI['RAILWAY']} Using Railway internal host: {host}")
-
-            if user and password:
-                encoded_user = quote_plus(user)
-                encoded_password = quote_plus(password)
-
-                if '.mongodb.net' in host:
-                    return f"mongodb+srv://{encoded_user}:{encoded_password}@{host}/{db_name}?retryWrites=true&w=majority"
-                else:
-                    return f"mongodb://{encoded_user}:{encoded_password}@{host}:{port}/{db_name}?authSource=admin&retryWrites=true&w=majority"
-            elif user:
-                return f"mongodb://{quote_plus(user)}@{host}:{port}/{db_name}?authSource=admin"
-            else:
-                return f"mongodb://{host}:{port}/{db_name}"
-
-        except Exception as e:
-            mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_INIT: Failed to build URI from components: {e}")
-            return None
-
-    def _get_db_name(self) -> str:
-        """Get database name from environment or config."""
-        db_name = os.environ.get('MONGODB_DB', os.environ.get('MONGO_DB'))
-
-        if not db_name:
-            try:
-                db_name = getattr(config, 'mongodb_db_name', 'trading_bot_dca')
-            except:
-                db_name = 'trading_bot_dca'
-
-        return db_name
+        if user and password:
+            return f"mongodb://{user}:{password}@{host}:{port}/{db_name}?authSource=admin"
+        elif user:
+            return f"mongodb://{user}@{host}:{port}/{db_name}?authSource=admin"
+        else:
+            return f"mongodb://{host}:{port}/{db_name}"
 
     def _connect(self):
-        """Connect to MongoDB with retry logic."""
-        if not MONGODB_AVAILABLE:
-            raise ImportError("pymongo not available")
+        """Connect to MongoDB."""
+        if not PYMONGO_AVAILABLE:
+            logger.warning(f"{EMOJI['WARNING']} MONGODB: PyMongo not installed")
+            return
 
-        max_retries = 5
-        retry_delay = 3
-
-        mongo_logger.info(f"{EMOJI['INFO']} Attempting to connect to MongoDB (max {max_retries} retries)...")
-
-        for attempt in range(max_retries):
+        for attempt in range(self.max_retries):
             try:
-                self._connection_attempts += 1
-
-                if 'railway.internal' in self.mongo_uri:
-                    mongo_logger.info(f"{EMOJI['RAILWAY']} Connecting to Railway internal MongoDB...")
+                logger.info(f"{EMOJI['MONGODB']} Connecting to MongoDB (attempt {attempt + 1}/{self.max_retries})...")
 
                 self.client = MongoClient(
-                    self.mongo_uri,
-                    serverSelectionTimeoutMS=15000,
-                    connectTimeoutMS=15000,
-                    socketTimeoutMS=15000,
-                    maxPoolSize=50,
-                    minPoolSize=5,
-                    retryWrites=True,
-                    w='majority',
-                    tlsAllowInvalidCertificates=True,
-                    tlsAllowInvalidHostnames=True,
+                    self.uri,
+                    serverSelectionTimeoutMS=self.connect_timeout,
+                    connectTimeoutMS=self.connect_timeout,
+                    socketTimeoutMS=self.connect_timeout,
                 )
 
+                # Test connection
                 self.client.admin.command('ping')
 
                 self.db = self.client[self.db_name]
+                self._connected = True
+                self.enabled = True
 
-                collections = self.db.list_collection_names()
-                mongo_logger.info(f"{EMOJI['DEBUG']} Available collections: {collections}")
+                # Create indexes
+                self._create_indexes()
 
-                mongo_logger.info(f"{EMOJI['SUCCESS']} Connected to MongoDB on attempt {attempt + 1}")
+                logger.info(f"{EMOJI['SUCCESS']} MONGODB: Connected to {self.db_name}")
                 return
-
-            except OperationFailure as e:
-                error_msg = str(e)
-                if 'Authentication failed' in error_msg or 'auth failed' in error_msg.lower():
-                    mongo_logger.error(f"{EMOJI['AUTH']} Authentication failed - check username/password")
-                    mongo_logger.error(f"{EMOJI['AUTH']} URI: {self._redact_uri(self.mongo_uri)}")
-                    raise
-                elif attempt < max_retries - 1:
-                    mongo_logger.warning(f"{EMOJI['RETRY']} Operation failed, retrying in {retry_delay}s: {e}")
-                    time.sleep(retry_delay)
-                else:
-                    raise
 
             except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-                if attempt < max_retries - 1:
-                    wait_time = retry_delay * (attempt + 1)
-                    mongo_logger.warning(f"{EMOJI['RETRY']} Connection attempt {attempt + 1} failed, retrying in {wait_time}s: {e}")
-                    time.sleep(wait_time)
-                else:
-                    mongo_logger.error(f"{EMOJI['ERROR']} All connection attempts failed")
-                    raise
+                logger.warning(f"{EMOJI['WARNING']} MONGODB: Connection attempt {attempt + 1} failed: {e}")
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay * (attempt + 1))
 
             except Exception as e:
-                if attempt < max_retries - 1:
-                    wait_time = retry_delay * (attempt + 1)
-                    mongo_logger.warning(f"{EMOJI['RETRY']} Attempt {attempt + 1} failed, retrying in {wait_time}s: {e}")
-                    time.sleep(wait_time)
-                else:
-                    raise
+                logger.error(f"{EMOJI['ERROR']} MONGODB: Connection error: {e}")
+                break
+
+        logger.error(f"{EMOJI['ERROR']} MONGODB: Failed to connect after {self.max_retries} attempts")
 
     def _create_indexes(self):
-        """Create necessary indexes for performance."""
+        """Create indexes for collections."""
+        if not self._connected or not self.db:
+            return
+
         try:
-            if self.db is None:
-                return
-
             # Active signals indexes
-            active_collection = self.db[self.ACTIVE_COLLECTION]
-            active_collection.create_index([("symbol", ASCENDING)])
-            active_collection.create_index([("status", ASCENDING)])
-            active_collection.create_index([("entry_time", DESCENDING)])
-            active_collection.create_index([("symbol", ASCENDING), ("status", ASCENDING)])
-
-            # New: Index for conditions tracking
-            active_collection.create_index([("conditions_met", ASCENDING)])
-            active_collection.create_index([("signal_strength", ASCENDING)])
+            active_col = self.db[self.active_collection]
+            active_col.create_index("symbol", unique=True)
+            active_col.create_index("entry_time")
+            active_col.create_index("status")
+            active_col.create_index([("symbol", 1), ("status", 1)])
 
             # Resolved signals indexes
-            resolved_collection = self.db[self.RESOLVED_COLLECTION]
-            resolved_collection.create_index([("symbol", ASCENDING)])
-            resolved_collection.create_index([("status", ASCENDING)])
-            resolved_collection.create_index([("exit_time", DESCENDING)])
-            resolved_collection.create_index([("symbol", ASCENDING), ("status", ASCENDING)])
+            resolved_col = self.db[self.resolved_collection]
+            resolved_col.create_index("symbol")
+            resolved_col.create_index("exit_time")
+            resolved_col.create_index("status")
+            resolved_col.create_index([("symbol", 1), ("exit_time", -1)])
 
-            # Signals archive indexes
-            signals_collection = self.db[self.SIGNALS_COLLECTION]
-            signals_collection.create_index([("symbol", ASCENDING), ("signal_type", ASCENDING)])
-            signals_collection.create_index([("timestamp", DESCENDING)])
+            logger.debug(f"{EMOJI['SUCCESS']} MONGODB: Indexes created")
 
-            # New: Index for strategy version
-            signals_collection.create_index([("strategy_version", ASCENDING)])
-
-            mongo_logger.info(f"{EMOJI['INDEX']} MONGODB: Indexes created")
-
-        except OperationFailure as e:
-            mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB: Index creation failed - {e}")
         except Exception as e:
-            mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB: Index creation failed - {e}")
+            logger.warning(f"{EMOJI['WARNING']} MONGODB: Index creation failed: {e}")
 
     def is_available(self) -> bool:
         """Check if MongoDB is available."""
-        if not self._connected or self.client is None or self.db is None:
-            return False
-
-        try:
-            self.client.admin.command('ping')
-            return True
-        except:
-            return False
-
-    def is_initialized(self) -> bool:
-        """Check if MongoDB is initialized."""
-        return self.initialized and self.is_available()
-
-    def get_last_error(self) -> Optional[str]:
-        """Get the last error that occurred."""
-        return self._last_error
-
-    def get_connection_status(self) -> Dict[str, Any]:
-        """Get detailed connection status."""
-        return {
-            "initialized": self.initialized,
-            "connected": self._connected,
-            "available": self.is_available(),
-            "db_name": self.db_name if hasattr(self, 'db_name') else None,
-            "last_error": self._last_error,
-            "version": self.version,
-            "connection_attempts": self._connection_attempts,
-            "uri_configured": bool(hasattr(self, 'mongo_uri') and self.mongo_uri),
-            "metrics": self.metrics,
-        }
-
-    def get_collection(self, collection_name: str):
-        """Get a collection by name."""
-        if not self.is_available():
-            return None
-        return self.db[collection_name]
-
-    # ==================== SIGNAL OPERATIONS ====================
+        return self._connected and self.enabled
 
     def save_signal(self, signal_data: Dict[str, Any]) -> Optional[str]:
         """
-        Save signal to ACTIVE collection and archive.
-        Supports Super TDI + Super BB strategy fields.
+        Save a signal to MongoDB.
+
+        Args:
+            signal_data: Signal data dictionary
+
+        Returns:
+            Inserted document ID or None
         """
         if not self.is_available():
-            mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_SAVE: Not available")
             return None
 
         try:
-            # Add timestamps
-            signal_data['created_at'] = datetime.now().isoformat()
-            signal_data['updated_at'] = datetime.now().isoformat()
-            signal_data['strategy_version'] = "3.4.1"
-            signal_data['strategy_name'] = "Super TDI + Super Bollinger Bands"
+            # Convert numpy types to Python types
+            cleaned_data = convert_numpy_types(signal_data)
 
-            # Ensure condition fields are present
-            condition_fields = [
-                'conditions_met', 'conditions_total',
-                'condition_1_tdi_zone', 'condition_2_tdi_cross',
-                'condition_3_bb_touch', 'condition_4_candles_shrinking',
-                'condition_5_reversal_confirm'
-            ]
-            for field in condition_fields:
-                if field not in signal_data:
-                    signal_data[field] = 0 if field == 'conditions_met' else False
+            # Add timestamp
+            cleaned_data['saved_at'] = datetime.now()
 
-            if '_id' not in signal_data:
-                signal_data['_id'] = self._generate_id(signal_data)
+            collection = self.db[self.active_collection]
+            result = collection.insert_one(cleaned_data)
 
-            doc_id = signal_data['_id']
-
-            # PRIMARY: Save to ACTIVE collection
-            active_collection = self.db[self.ACTIVE_COLLECTION]
-            result = active_collection.update_one(
-                {'_id': doc_id},
-                {'$set': signal_data},
-                upsert=True
-            )
-
-            if result.acknowledged:
-                self.metrics["signals_saved"] += 1
-                mongo_logger.info(f"{EMOJI['ACTIVE']} MONGODB_SAVE: Saved signal to {self.ACTIVE_COLLECTION}: {doc_id}")
-                mongo_logger.debug(f"  Conditions: {signal_data.get('conditions_met', 0)}/{signal_data.get('conditions_total', 5)}")
-            else:
-                mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_SAVE: Failed to save to {self.ACTIVE_COLLECTION}")
-                return None
-
-            # SECONDARY: Archive to signals collection
-            try:
-                signals_collection = self.db[self.SIGNALS_COLLECTION]
-                signals_collection.update_one(
-                    {'_id': doc_id},
-                    {'$set': signal_data},
-                    upsert=True
-                )
-                self.metrics["archive_saves"] += 1
-                mongo_logger.debug(f"{EMOJI['DB']} MONGODB_SAVE: Archived to {self.SIGNALS_COLLECTION}: {doc_id}")
-            except Exception as e:
-                mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_SAVE: Failed to archive: {e}")
-
-            return doc_id
+            logger.debug(f"{EMOJI['DB']} MONGODB: Signal saved - ID: {result.inserted_id}")
+            return str(result.inserted_id)
 
         except Exception as e:
-            self.metrics["errors"] += 1
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_SAVE: Failed - {e}")
+            logger.error(f"{EMOJI['ERROR']} MONGODB_SAVE: Failed - {e}")
             return None
-
-    def get_signal(self, doc_id: str, collection: str = None) -> Optional[Dict]:
-        """Get a signal by document ID from specified collection."""
-        if not self.is_available():
-            return None
-
-        try:
-            if collection is None or collection == self.ACTIVE_COLLECTION:
-                active_collection = self.db[self.ACTIVE_COLLECTION]
-                signal = active_collection.find_one({'_id': doc_id})
-                if signal:
-                    signal['_id'] = str(signal['_id'])
-                    return signal
-
-            if collection is None or collection == self.RESOLVED_COLLECTION:
-                resolved_collection = self.db[self.RESOLVED_COLLECTION]
-                signal = resolved_collection.find_one({'_id': doc_id})
-                if signal:
-                    signal['_id'] = str(signal['_id'])
-                    return signal
-
-            if collection is None or collection == self.SIGNALS_COLLECTION:
-                signals_collection = self.db[self.SIGNALS_COLLECTION]
-                signal = signals_collection.find_one({'_id': doc_id})
-                if signal:
-                    signal['_id'] = str(signal['_id'])
-                    return signal
-
-            return None
-
-        except Exception as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_GET: Failed - {e}")
-            return None
-
-    def get_active_signals(self, limit: int = 100) -> Dict[str, Dict]:
-        """Get all active signals from ACTIVE collection."""
-        if not self.is_available():
-            return {}
-
-        try:
-            active_collection = self.db[self.ACTIVE_COLLECTION]
-            signals = active_collection.find(
-                {'status': {'$ne': 'RESOLVED'}},
-                limit=limit
-            ).sort('entry_time', DESCENDING)
-
-            result = {}
-            for signal in signals:
-                doc_id = str(signal['_id'])
-                signal['_id'] = doc_id
-                result[doc_id] = signal
-
-            mongo_logger.debug(f"{EMOJI['ACTIVE']} MONGODB_GET_ACTIVE: Found {len(result)} active signals")
-            return result
-
-        except Exception as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_GET_ACTIVE: Failed - {e}")
-            return {}
-
-    def get_active_signals_by_conditions(self, min_conditions: int = 3) -> List[Dict]:
-        """
-        Get active signals that meet minimum condition threshold.
-        Super TDI + Super BB specific.
-        """
-        if not self.is_available():
-            return []
-
-        try:
-            active_collection = self.db[self.ACTIVE_COLLECTION]
-            signals = active_collection.find({
-                'status': 'ACTIVE',
-                'conditions_met': {'$gte': min_conditions}
-            }).sort('conditions_met', DESCENDING)
-
-            result = []
-            for signal in signals:
-                signal['_id'] = str(signal['_id'])
-                result.append(signal)
-
-            mongo_logger.debug(f"Found {len(result)} signals with {min_conditions}+ conditions")
-            return result
-
-        except Exception as e:
-            mongo_logger.error(f"Error getting signals by conditions: {e}")
-            return []
-
-    def get_resolved_signals(self, limit: int = 100) -> Dict[str, Dict]:
-        """Get resolved signals from RESOLVED collection."""
-        if not self.is_available():
-            return {}
-
-        try:
-            resolved_collection = self.db[self.RESOLVED_COLLECTION]
-            signals = resolved_collection.find({}, limit=limit).sort('exit_time', DESCENDING)
-
-            result = {}
-            for signal in signals:
-                doc_id = str(signal['_id'])
-                signal['_id'] = doc_id
-                result[doc_id] = signal
-
-            mongo_logger.debug(f"{EMOJI['RESOLVED']} MONGODB_GET_RESOLVED: Found {len(result)} resolved signals")
-            return result
-
-        except Exception as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_GET_RESOLVED: Failed - {e}")
-            return {}
 
     def update_signal_status(self, doc_id: str, status: str, update_data: Dict[str, Any]) -> bool:
         """
-        Complete deletion from active collection when resolved.
+        Update signal status.
 
-        - For terminal status (PROFIT/LOSS/BREAK_EVEN):
-          1. Save to resolved collection
-          2. COMPLETELY DELETE from active collection
-          3. Archive to signals collection
-        - For non-terminal: Update in active collection
+        Args:
+            doc_id: Document ID
+            status: New status
+            update_data: Additional update data
+
+        Returns:
+            True if successful
+        """
+        if not self.is_available() or not doc_id:
+            return False
+
+        try:
+            from bson.objectid import ObjectId
+
+            # Convert numpy types
+            cleaned_update = convert_numpy_types(update_data)
+            cleaned_update['status'] = status
+            cleaned_update['updated_at'] = datetime.now()
+
+            collection = self.db[self.active_collection]
+
+            # Update in active collection
+            result = collection.update_one(
+                {"_id": ObjectId(doc_id)},
+                {"$set": cleaned_update}
+            )
+
+            if result.modified_count > 0:
+                # Move to resolved collection
+                doc = collection.find_one({"_id": ObjectId(doc_id)})
+                if doc:
+                    resolved_col = self.db[self.resolved_collection]
+                    doc['resolved_at'] = datetime.now()
+                    resolved_col.insert_one(doc)
+                    collection.delete_one({"_id": ObjectId(doc_id)})
+
+                logger.debug(f"{EMOJI['DB']} MONGODB: Signal {doc_id} updated to {status}")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"{EMOJI['ERROR']} MONGODB_UPDATE: Failed - {e}")
+            return False
+
+    def get_active_signals(self, symbol: Optional[str] = None) -> List[Dict]:
+        """
+        Get active signals.
+
+        Args:
+            symbol: Optional symbol filter
+
+        Returns:
+            List of active signals
+        """
+        if not self.is_available():
+            return []
+
+        try:
+            collection = self.db[self.active_collection]
+            query = {"status": "ACTIVE"}
+            if symbol:
+                query["symbol"] = symbol
+
+            cursor = collection.find(query)
+            return list(cursor)
+
+        except Exception as e:
+            logger.error(f"{EMOJI['ERROR']} MONGODB_GET: Failed - {e}")
+            return []
+
+    def get_resolved_signals(self, symbol: Optional[str] = None, limit: int = 100) -> List[Dict]:
+        """
+        Get resolved signals.
+
+        Args:
+            symbol: Optional symbol filter
+            limit: Maximum number of results
+
+        Returns:
+            List of resolved signals
+        """
+        if not self.is_available():
+            return []
+
+        try:
+            collection = self.db[self.resolved_collection]
+            query = {}
+            if symbol:
+                query["symbol"] = symbol
+
+            cursor = collection.find(query).sort("exit_time", -1).limit(limit)
+            return list(cursor)
+
+        except Exception as e:
+            logger.error(f"{EMOJI['ERROR']} MONGODB_GET: Failed - {e}")
+            return []
+
+    def delete_active_signal(self, symbol: str) -> bool:
+        """
+        Delete active signal for a symbol.
+
+        Args:
+            symbol: Symbol to delete
+
+        Returns:
+            True if successful
         """
         if not self.is_available():
             return False
 
         try:
-            active_collection = self.db[self.ACTIVE_COLLECTION]
-            signal = active_collection.find_one({'_id': doc_id})
-
-            if not signal:
-                mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_UPDATE: Signal {doc_id} not found in {self.ACTIVE_COLLECTION}")
-                resolved_collection = self.db[self.RESOLVED_COLLECTION]
-                if resolved_collection.find_one({'_id': doc_id}):
-                    mongo_logger.info(f"{EMOJI['INFO']} MONGODB_UPDATE: Signal {doc_id} already in resolved")
-                    return True
-                return False
-
-            signal_data = signal.copy()
-            if '_id' in signal_data:
-                del signal_data['_id']
-
-            signal_data.update(update_data)
-            signal_data['status'] = status
-            signal_data['updated_at'] = datetime.now().isoformat()
-
-            terminal_statuses = ['PROFIT', 'LOSS', 'BREAK_EVEN', 'CLOSED']
-
-            if status in terminal_statuses:
-                # ===== STEP 1: SAVE TO RESOLVED COLLECTION =====
-                signal_data['resolved_at'] = datetime.now().isoformat()
-                signal_data['original_doc_id'] = doc_id
-
-                resolved_collection = self.db[self.RESOLVED_COLLECTION]
-                resolved_result = resolved_collection.update_one(
-                    {'_id': doc_id},
-                    {'$set': signal_data},
-                    upsert=True
-                )
-
-                if resolved_result.acknowledged:
-                    self.metrics["resolved_saves"] += 1
-                    mongo_logger.info(f"{EMOJI['RESOLVED']} MONGODB_UPDATE: Signal {doc_id} saved to {self.RESOLVED_COLLECTION} ({status})")
-                    mongo_logger.debug(f"  Conditions: {signal_data.get('conditions_met', 0)}/{signal_data.get('conditions_total', 5)}")
-                else:
-                    mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_UPDATE: Failed to save {doc_id} to resolved")
-                    return False
-
-                # ===== STEP 2: COMPLETELY DELETE FROM ACTIVE COLLECTION =====
-                delete_result = active_collection.delete_one({'_id': doc_id})
-
-                if delete_result.deleted_count > 0:
-                    self.metrics["active_deletions"] += 1
-                    mongo_logger.info(f"{EMOJI['DELETE']} ✅ MONGODB_DELETE: COMPLETELY DELETED {doc_id} from {self.ACTIVE_COLLECTION}")
-                else:
-                    mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_DELETE: Failed to delete {doc_id} from active (may already be deleted)")
-
-                # ===== STEP 3: UPDATE ARCHIVE =====
-                try:
-                    signals_collection = self.db[self.SIGNALS_COLLECTION]
-                    signals_collection.update_one(
-                        {'_id': doc_id},
-                        {'$set': signal_data},
-                        upsert=True
-                    )
-                    self.metrics["archive_saves"] += 1
-                    mongo_logger.debug(f"{EMOJI['DB']} MONGODB_UPDATE: Archived {doc_id} to {self.SIGNALS_COLLECTION}")
-                except Exception as e:
-                    mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_UPDATE: Failed to archive: {e}")
-
-                return True
-
-            else:
-                # ===== NON-TERMINAL: Update in active collection =====
-                result = active_collection.update_one(
-                    {'_id': doc_id},
-                    {'$set': signal_data}
-                )
-
-                if result.modified_count > 0:
-                    self.metrics["active_updates"] += 1
-                    mongo_logger.debug(f"{EMOJI['UPDATE']} MONGODB_UPDATE: Updated signal {doc_id} in {self.ACTIVE_COLLECTION}")
-                    return True
-                else:
-                    mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_UPDATE: No changes to {doc_id}")
-                    return False
+            collection = self.db[self.active_collection]
+            result = collection.delete_one({"symbol": symbol})
+            return result.deleted_count > 0
 
         except Exception as e:
-            self.metrics["errors"] += 1
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_UPDATE: Failed - {e}")
+            logger.error(f"{EMOJI['ERROR']} MONGODB_DELETE: Failed - {e}")
             return False
 
-    def move_to_resolved(self, doc_id: str, signal_data: Dict[str, Any]) -> bool:
-        """Move a signal to resolved collection and delete from active."""
-        if not self.is_available():
-            return False
+    def clear_all_active(self) -> int:
+        """
+        Clear all active signals.
 
-        try:
-            if '_id' not in signal_data:
-                signal_data['_id'] = doc_id
-
-            signal_data['resolved_at'] = datetime.now().isoformat()
-            signal_data['strategy_version'] = "3.4.1"
-
-            # Save to resolved
-            resolved_collection = self.db[self.RESOLVED_COLLECTION]
-            resolved_result = resolved_collection.update_one(
-                {'_id': doc_id},
-                {'$set': signal_data},
-                upsert=True
-            )
-
-            if resolved_result.acknowledged:
-                self.metrics["resolved_saves"] += 1
-                mongo_logger.info(f"{EMOJI['RESOLVED']} MONGODB_MOVE: Signal {doc_id} saved to resolved")
-
-                # Delete from active
-                active_collection = self.db[self.ACTIVE_COLLECTION]
-                delete_result = active_collection.delete_one({'_id': doc_id})
-
-                if delete_result.deleted_count > 0:
-                    self.metrics["active_deletions"] += 1
-                    mongo_logger.info(f"{EMOJI['DELETE']} ✅ MONGODB_DELETE: COMPLETELY DELETED {doc_id} from active")
-                else:
-                    mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_DELETE: Failed to delete {doc_id} from active")
-
-                return True
-
-            return False
-
-        except Exception as e:
-            self.metrics["errors"] += 1
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_MOVE: Failed - {e}")
-            return False
-
-    def delete_signal(self, doc_id: str, collection: str = None) -> bool:
-        """Delete a signal from specified collection."""
-        if not self.is_available():
-            return False
-
-        try:
-            if collection == 'active' or collection is None:
-                coll = self.db[self.ACTIVE_COLLECTION]
-            elif collection == 'resolved':
-                coll = self.db[self.RESOLVED_COLLECTION]
-            elif collection == 'archive':
-                coll = self.db[self.SIGNALS_COLLECTION]
-            else:
-                mongo_logger.warning(f"{EMOJI['WARNING']} MONGODB_DELETE: Unknown collection: {collection}")
-                return False
-
-            result = coll.delete_one({'_id': doc_id})
-
-            if result.deleted_count > 0:
-                if collection == 'active' or collection is None:
-                    self.metrics["active_deletions"] += 1
-                mongo_logger.info(f"{EMOJI['DELETE']} MONGODB_DELETE: Deleted {doc_id} from {collection or 'active'}")
-                return True
-            else:
-                mongo_logger.debug(f"{EMOJI['DEBUG']} MONGODB_DELETE: Document {doc_id} not found in {collection or 'active'}")
-                return False
-
-        except Exception as e:
-            self.metrics["errors"] += 1
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_DELETE: Failed - {e}")
-            return False
-
-    def cleanup_orphaned_active_signals(self) -> int:
-        """Clean up orphaned active signals that should have been deleted."""
+        Returns:
+            Number of deleted documents
+        """
         if not self.is_available():
             return 0
 
         try:
-            active_collection = self.db[self.ACTIVE_COLLECTION]
-            terminal_statuses = ['PROFIT', 'LOSS', 'BREAK_EVEN', 'CLOSED', 'RESOLVED']
-
-            orphaned = active_collection.find({'status': {'$in': terminal_statuses}})
-            orphaned_list = list(orphaned)
-            deleted_count = 0
-
-            for signal in orphaned_list:
-                doc_id = signal.get('_id')
-                if doc_id:
-                    result = active_collection.delete_one({'_id': doc_id})
-                    if result.deleted_count > 0:
-                        deleted_count += 1
-                        self.metrics["active_deletions"] += 1
-                        mongo_logger.info(f"{EMOJI['DELETE']} Cleaned up orphaned signal: {doc_id} (status: {signal.get('status')})")
-
-            if deleted_count > 0:
-                mongo_logger.info(f"{EMOJI['SUCCESS']} Cleaned up {deleted_count} orphaned active signals")
-
-            return deleted_count
+            collection = self.db[self.active_collection]
+            result = collection.delete_many({})
+            logger.info(f"{EMOJI['DB']} MONGODB: Cleared {result.deleted_count} active signals")
+            return result.deleted_count
 
         except Exception as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_CLEANUP: Failed - {e}")
+            logger.error(f"{EMOJI['ERROR']} MONGODB_CLEAR: Failed - {e}")
             return 0
 
-    # ==================== SUPER TDI + SUPER BB STATS ====================
+    def get_stats(self) -> Dict[str, Any]:
+        """Get database statistics."""
+        stats = {
+            'enabled': self.enabled,
+            'connected': self._connected,
+            'db_name': self.db_name,
+        }
 
-    def get_strategy_stats(self) -> Dict[str, Any]:
-        """Get Super TDI + Super BB specific statistics."""
-        if not self.is_available():
-            return {}
+        if self.is_available():
+            try:
+                active_col = self.db[self.active_collection]
+                resolved_col = self.db[self.resolved_collection]
 
-        try:
-            active_collection = self.db[self.ACTIVE_COLLECTION]
+                stats['active_count'] = active_col.count_documents({})
+                stats['resolved_count'] = resolved_col.count_documents({})
+                stats['active_collection'] = self.active_collection
+                stats['resolved_collection'] = self.resolved_collection
 
-            # Count signals by condition level
-            signals_by_conditions = {}
-            for i in range(1, 6):
-                count = active_collection.count_documents({
-                    'status': 'ACTIVE',
-                    'conditions_met': i
-                })
-                signals_by_conditions[f"{i}_conditions"] = count
+            except Exception as e:
+                stats['error'] = str(e)
 
-            # Count by signal strength
-            hard_count = active_collection.count_documents({
-                'status': 'ACTIVE',
-                'signal_strength': 'HARD'
-            })
-            soft_count = active_collection.count_documents({
-                'status': 'ACTIVE',
-                'signal_strength': 'SOFT'
-            })
-
-            # Count by AI decision
-            ai_approved = active_collection.count_documents({
-                'status': 'ACTIVE',
-                'ai_decision': 'APPROVE'
-            })
-            ai_rejected = active_collection.count_documents({
-                'status': 'ACTIVE',
-                'ai_decision': 'REJECT'
-            })
-
-            return {
-                'active_signals': active_collection.count_documents({'status': 'ACTIVE'}),
-                'signals_by_conditions': signals_by_conditions,
-                'hard_signals': hard_count,
-                'soft_signals': soft_count,
-                'ai_approved': ai_approved,
-                'ai_rejected': ai_rejected,
-                'total_saved': self.metrics.get('signals_saved', 0),
-            }
-
-        except Exception as e:
-            mongo_logger.error(f"Error getting strategy stats: {e}")
-            return {}
-
-    # ==================== STATS OPERATIONS ====================
-
-    def save_stats(self, stats: Dict[str, Any]) -> bool:
-        """Save bot statistics."""
-        if not self.is_available():
-            return False
-
-        try:
-            collection = self.db[self.STATS_COLLECTION]
-            stats['updated_at'] = datetime.now().isoformat()
-            stats['strategy_version'] = "3.4.1"
-            stats['strategy_name'] = "Super TDI + Super Bollinger Bands"
-
-            result = collection.update_one(
-                {'_id': 'bot_stats'},
-                {'$set': stats},
-                upsert=True
-            )
-
-            return result.acknowledged
-
-        except Exception as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_STATS_SAVE: Failed - {e}")
-            return False
-
-    def get_stats(self) -> Dict:
-        """Get bot statistics."""
-        if not self.is_available():
-            return {}
-
-        try:
-            collection = self.db[self.STATS_COLLECTION]
-            stats = collection.find_one({'_id': 'bot_stats'})
-
-            if stats:
-                stats['_id'] = str(stats['_id'])
-                return stats
-
-            return {}
-
-        except Exception as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_STATS_GET: Failed - {e}")
-            return {}
-
-    # ==================== ERROR LOGGING ====================
-
-    def log_error(self, error_data: Dict[str, Any]) -> bool:
-        """Log an error to MongoDB."""
-        if not self.is_available():
-            return False
-
-        try:
-            collection = self.db[self.ERRORS_COLLECTION]
-            error_data['timestamp'] = datetime.now().isoformat()
-            error_data['strategy_version'] = "3.4.1"
-
-            result = collection.insert_one(error_data)
-            return result.acknowledged
-
-        except Exception as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_ERROR_LOG: Failed - {e}")
-            return False
-
-    # ==================== UTILITY METHODS ====================
-
-    def _generate_id(self, data: Dict[str, Any]) -> str:
-        """Generate a unique ID for a signal."""
-        symbol = data.get('symbol', 'UNKNOWN')
-        signal_type = data.get('signal_type', 'UNKNOWN')
-        timestamp = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
-        return f"{symbol}_{signal_type}_{timestamp}"
-
-    def get_collection_stats(self, collection_name: str) -> Dict:
-        """Get statistics for a collection."""
-        if not self.is_available():
-            return {}
-
-        try:
-            collection = self.db[collection_name]
-            count = collection.count_documents({})
-
-            return {
-                'name': collection_name,
-                'count': count,
-                'exists': True
-            }
-
-        except Exception as e:
-            mongo_logger.error(f"{EMOJI['ERROR']} MONGODB_COLLECTION_STATS: Failed - {e}")
-            return {'name': collection_name, 'count': 0, 'exists': False}
+        return stats
 
     def cleanup(self):
         """Clean up MongoDB connection."""
         if self.client:
-            self.client.close()
-            mongo_logger.info(f"{EMOJI['STOP']} MONGODB: Connection closed")
+            try:
+                self.client.close()
+                self._connected = False
+                self.enabled = False
+                logger.info(f"{EMOJI['SUCCESS']} MONGODB: Connection closed")
+            except Exception as e:
+                logger.warning(f"{EMOJI['WARNING']} MONGODB: Cleanup error: {e}")
 
-    def __del__(self):
-        """Destructor to ensure connection is closed."""
-        self.cleanup()
 
+# ==================== SINGLETON ====================
 
-# Create singleton instance
 mongodb_client = MongoDBClient()
 
-# Export for compatibility with existing code
-firebase_client = mongodb_client
-
 __all__ = [
-    'mongodb_client',
-    'firebase_client',
-    'MongoDBClient',
+    "mongodb_client",
+    "MongoDBClient",
+    "convert_numpy_types",
 ]

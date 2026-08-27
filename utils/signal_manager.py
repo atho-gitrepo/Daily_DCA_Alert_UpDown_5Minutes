@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import json
 import traceback
+from utils.mongodb_client import convert_numpy_types
 
 try:
     from utils.mongodb_client import mongodb_client as db_client
@@ -321,9 +322,13 @@ class SignalManager:
 
             # Save to DB
             if self.db_enabled:
-                doc_id = self._save_to_db(signal.to_dict())
+                signal_dict = signal.to_dict()
+                # Convert numpy types before saving
+                signal_dict = convert_numpy_types(signal_dict)
+                doc_id = self._save_to_db(signal_dict)
                 if doc_id:
                     signal.db_doc_id = doc_id
+                    raw_data['db_doc_id'] = doc_id
 
             self.active_signals[symbol] = signal
             self.symbol_last_signal[symbol] = datetime.now()
@@ -354,15 +359,15 @@ class SignalManager:
         return self.active_signals.copy()
 
     def check_active_signal(self, symbol: str, current_price: float,
-                           last_candle: Dict) -> Tuple[str, float, Optional[SignalData]]:
+                       last_candle: Dict) -> Tuple[str, float, Optional[SignalData]]:
         """
-        Check active signal - ALIGNED WITH YOUR STRATEGY.
+        Check active signal - ALIGNED WITH YOUR ACTUAL STRATEGY.
 
         YOUR EXIT RULES:
-        1. TDI hits 50 and rejects → EXIT
-        2. TDI breaks through 50 → HOLD LONGER (continuation)
-        3. TP/SL hit → EXIT
-        4. Max hold reached → FORCE EXIT
+        - BUY: Exit when TDI reaches 70.0 (between Soft Sell and Hard Sell)
+        - SELL: Exit when TDI reaches 30.0 (between Soft Buy and Hard Buy)
+        - TP/SL: Always priority
+        - Max hold: Force exit
         """
         if symbol not in self.active_signals:
             return "NO_SIGNAL", 0, None
@@ -383,41 +388,7 @@ class SignalManager:
         if age_minutes < self.MIN_HOLD_MINUTES:
             return "ACTIVE", current_price - signal.entry_price, signal
 
-        # ===== GET CURRENT TDI =====
-        current_tdi = last_candle.get('tdi_slow_ma', signal.tdi_level)
-        prev_tdi = last_candle.get('tdi_slow_ma_prev', current_tdi)
-
-        # ===== RULE 1: TDI 50 LINE REJECTION (YOUR EXIT) =====
-        if signal.signal_type == "BUY":
-            # Entry TDI was below 50, target is 50
-            if signal.tdi_level < 50 and current_tdi >= 50:
-                # Check if this is a rejection or breakout
-                if current_tdi > 50 and prev_tdi <= 50:
-                    # REJECTION at 50 - EXIT!
-                    updated = self._unlock_symbol(symbol, TradeLifecycle.EXIT_50_REJECT, current_price)
-                    logger.info(f"{EMOJI['EXIT']} {symbol}: TDI rejected at 50 - EXIT at ${current_price:.4f}")
-                    return "EXIT_50_REJECT", current_price - signal.entry_price, updated
-                else:
-                    # Breakout through 50 - CONTINUATION
-                    signal.tdi_50_broken = True
-                    signal.max_hold_minutes = self.MAX_HOLD_MINUTES + self.EXTENSION_MINUTES
-                    logger.info(f"{EMOJI['CONTINUATION']} {symbol}: TDI broke 50 - HOLDING LONGER (extended to {signal.max_hold_minutes}min)")
-
-        elif signal.signal_type == "SELL":
-            # Entry TDI was above 50, target is 50
-            if signal.tdi_level > 50 and current_tdi <= 50:
-                if current_tdi < 50 and prev_tdi >= 50:
-                    # REJECTION at 50 - EXIT!
-                    updated = self._unlock_symbol(symbol, TradeLifecycle.EXIT_50_REJECT, current_price)
-                    logger.info(f"{EMOJI['EXIT']} {symbol}: TDI rejected at 50 - EXIT at ${current_price:.4f}")
-                    return "EXIT_50_REJECT", signal.entry_price - current_price, updated
-                else:
-                    # Breakout through 50 - CONTINUATION
-                    signal.tdi_50_broken = True
-                    signal.max_hold_minutes = self.MAX_HOLD_MINUTES + self.EXTENSION_MINUTES
-                    logger.info(f"{EMOJI['CONTINUATION']} {symbol}: TDI broke 50 - HOLDING LONGER (extended to {signal.max_hold_minutes}min)")
-
-        # ===== RULE 2: STOP LOSS =====
+        # ===== RULE 1: CHECK STOP LOSS (HIGHEST PRIORITY) =====
         if signal.signal_type == "BUY":
             if current_price <= signal.stop_loss:
                 updated = self._unlock_symbol(symbol, TradeLifecycle.LOSS, current_price)
@@ -429,7 +400,7 @@ class SignalManager:
                 logger.info(f"{EMOJI['LOSS']} {symbol}: SL HIT at ${current_price:.4f}")
                 return TradeLifecycle.LOSS.value, signal.entry_price - current_price, updated
 
-        # ===== RULE 3: TAKE PROFIT =====
+        # ===== RULE 2: CHECK TAKE PROFIT =====
         if signal.signal_type == "BUY":
             if current_price >= signal.take_profit:
                 updated = self._unlock_symbol(symbol, TradeLifecycle.PROFIT, current_price)
@@ -440,6 +411,38 @@ class SignalManager:
                 updated = self._unlock_symbol(symbol, TradeLifecycle.PROFIT, current_price)
                 logger.info(f"{EMOJI['PROFIT']} {symbol}: TP HIT at ${current_price:.4f}")
                 return TradeLifecycle.PROFIT.value, signal.entry_price - current_price, updated
+
+        # ===== RULE 3: TDI TARGET EXIT (YOUR STRATEGY) =====
+        # Get current TDI from last_candle
+        current_tdi = last_candle.get('tdi_slow_ma', signal.tdi_level)
+        prev_tdi = last_candle.get('tdi_slow_ma_prev', current_tdi)
+
+        # YOUR TARGETS
+        BUY_EXIT_TARGET = 70.0   # Between Soft Sell (65) and Hard Sell (75)
+        SELL_EXIT_TARGET = 30.0  # Between Soft Buy (35) and Hard Buy (25)
+
+        if signal.signal_type == "BUY":
+            # BUY: Entered below 50, exit when TDI reaches 70
+            if current_tdi >= BUY_EXIT_TARGET:
+                updated = self._unlock_symbol(symbol, TradeLifecycle.EXIT_TARGET, current_price)
+                logger.info(f"{EMOJI['EXIT']} {symbol}: TDI reached {BUY_EXIT_TARGET} - EXIT at ${current_price:.4f}")
+                return "EXIT_TARGET", current_price - signal.entry_price, updated
+            elif current_tdi > signal.tdi_level:
+                # Progress tracking
+                progress = (current_tdi - signal.tdi_level) / (BUY_EXIT_TARGET - signal.tdi_level) * 100
+                if progress > 50 and progress % 10 < 2:
+                    logger.debug(f"{symbol}: BUY progress: {progress:.1f}% toward {BUY_EXIT_TARGET}")
+
+        elif signal.signal_type == "SELL":
+            # SELL: Entered above 50, exit when TDI reaches 30
+            if current_tdi <= SELL_EXIT_TARGET:
+                updated = self._unlock_symbol(symbol, TradeLifecycle.EXIT_TARGET, current_price)
+                logger.info(f"{EMOJI['EXIT']} {symbol}: TDI reached {SELL_EXIT_TARGET} - EXIT at ${current_price:.4f}")
+                return "EXIT_TARGET", signal.entry_price - current_price, updated
+            elif current_tdi < signal.tdi_level:
+                progress = (signal.tdi_level - current_tdi) / (signal.tdi_level - SELL_EXIT_TARGET) * 100
+                if progress > 50 and progress % 10 < 2:
+                    logger.debug(f"{symbol}: SELL progress: {progress:.1f}% toward {SELL_EXIT_TARGET}")
 
         # ===== RULE 4: MAX HOLD REACHED =====
         if age_minutes >= signal.max_hold_minutes:

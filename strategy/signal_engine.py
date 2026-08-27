@@ -1,11 +1,9 @@
 """
 Signal Engine - Super TDI + MACD + Super Bollinger Bands
-ALIGNED WITH YOUR MANUAL STRATEGY:
-- PRIMARY: TDI (RSI) - Trade from green line to 50 line
-- SECONDARY: MACD - Confirmation
-- CONFIRMATION: BB - Last thing to confirm
-- EXIT: TDI hits 50 and rejects
-Version: 3.4.1 - FIXED: Aligned with manual strategy
+ALIGNED WITH YOUR ACTUAL STRATEGY:
+- BUY: Enter below 50 → Exit at 70
+- SELL: Enter above 50 → Exit at 30
+Version: 3.4.4 - FIXED: Exit targets (70 for BUY, 30 for SELL)
 """
 
 import pandas as pd
@@ -25,14 +23,14 @@ logger = logging.getLogger(__name__)
 
 class SignalEngine:
     """
-    Signal Engine aligned with YOUR manual strategy.
+    Signal Engine aligned with YOUR actual strategy.
 
-    Your Strategy:
-    1. PRIMARY: TDI (RSI) - Trade from green line to 50 line
-    2. SECONDARY: MACD - Confirmation
-    3. CONFIRMATION: BB - Last thing to confirm
-    4. EXIT: TDI hits 50 and rejects
-    5. CONTINUATION: If breaks 50, hold longer
+    YOUR STRATEGY:
+    - BUY: Enter TDI below 50 → Exit at TDI 70 (Soft Sell zone)
+    - SELL: Enter TDI above 50 → Exit at TDI 30 (Soft Buy zone)
+    - PRIMARY: TDI (RSI) - Entry and exit based on TDI levels
+    - SECONDARY: MACD - Confirmation
+    - CONFIRMATION: BB - Last thing to confirm
     """
 
     def __init__(self, use_ai: bool = True):
@@ -45,16 +43,25 @@ class SignalEngine:
 
         # Strategy parameters
         self.tdi_center_line = getattr(config.strategy, 'tdi_center_line', 50.0)
+        self.tdi_soft_buy = getattr(config.strategy, 'tdi_soft_buy', 35.0)
+        self.tdi_hard_buy = getattr(config.strategy, 'tdi_oversold', 25.0)
+        self.tdi_soft_sell = getattr(config.strategy, 'tdi_soft_sell', 65.0)
+        self.tdi_hard_sell = getattr(config.strategy, 'tdi_overbought', 75.0)
+
+        # YOUR EXIT TARGETS
+        self.BUY_EXIT_TARGET = 70.0   # Between Soft Sell (65) and Hard Sell (75)
+        self.SELL_EXIT_TARGET = 30.0  # Between Soft Buy (35) and Hard Buy (25)
+
         self.min_rrr = getattr(config.strategy, 'min_rrr', 1.5)
         self.default_rrr = getattr(config.strategy, 'default_rrr', 2.0)
         self.max_rrr = getattr(config.strategy, 'max_rrr', 4.0)
         self.min_quality_score = getattr(config.strategy, 'min_quality_score', 50)
 
         # Exit parameters
-        self.max_hold_minutes = 60  # Default max hold
+        self.max_hold_minutes = 60  # Max hold
         self.extension_minutes = 30  # Extra hold if breakout
 
-        # Grade thresholds (lowered for more signals)
+        # Grade thresholds
         self.grade_a_threshold = getattr(config.strategy, 'grade_a_threshold', 80)
         self.grade_b_threshold = getattr(config.strategy, 'grade_b_threshold', 60)
         self.grade_c_threshold = getattr(config.strategy, 'grade_c_threshold', 50)
@@ -63,11 +70,13 @@ class SignalEngine:
         logger.info(f"   RRR Range: {self.min_rrr} - {self.max_rrr}")
         logger.info(f"   Default RRR: {self.default_rrr}")
         logger.info(f"   TDI Center Line: {self.tdi_center_line}")
-        logger.info(f"   Strategy: Trade from green line to 50 line")
+        logger.info(f"   🎯 BUY Exit Target: TDI {self.BUY_EXIT_TARGET}")
+        logger.info(f"   🎯 SELL Exit Target: TDI {self.SELL_EXIT_TARGET}")
+        logger.info(f"   Strategy: Enter at extremes → Exit at opposite extremes")
 
     def process(self, df: pd.DataFrame, symbol: str = "UNKNOWN", htf_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
         """
-        Process signal aligned with your manual strategy.
+        Process signal aligned with YOUR actual strategy.
         """
         if df is None or df.empty:
             return self._no_signal(symbol, "No data")
@@ -96,7 +105,7 @@ class SignalEngine:
             tdi_zone = tdi_result.get('tdi_zone', 'UNKNOWN')
             return self._no_signal(symbol, f"TDI: {tdi_level:.1f} ({tdi_zone})")
 
-        # ===== STEP 5: CHECK CONDITIONS (YOUR STRATEGY) =====
+        # ===== STEP 5: CHECK CONDITIONS =====
         conditions_ok, conditions_reason, conditions_met = self._check_conditions(
             tdi_result, bb_result, macd_result, direction
         )
@@ -108,10 +117,10 @@ class SignalEngine:
         # ===== STEP 6: GENERATE SIGNAL =====
         if direction == "BUY":
             signal_data = self._generate_buy_signal(symbol, df, tdi_result, bb_result, macd_result)
-            logger.info(f"🟢 {symbol}: BUY signal - TDI: {tdi_result.get('tdi_level', 50):.1f} (target: 50)")
+            logger.info(f"🟢 {symbol}: BUY signal - TDI: {tdi_result.get('tdi_level', 50):.1f} → Target: {self.BUY_EXIT_TARGET}")
         else:
             signal_data = self._generate_sell_signal(symbol, df, tdi_result, bb_result, macd_result)
-            logger.info(f"🔴 {symbol}: SELL signal - TDI: {tdi_result.get('tdi_level', 50):.1f} (target: 50)")
+            logger.info(f"🔴 {symbol}: SELL signal - TDI: {tdi_result.get('tdi_level', 50):.1f} → Target: {self.SELL_EXIT_TARGET}")
 
         if signal_data is None:
             return self._no_signal(symbol, "Signal generation failed")
@@ -133,19 +142,19 @@ class SignalEngine:
         self.last_signal = signal_data
         self.last_signal_time = datetime.now()
 
-        logger.info(f"✅ {symbol}: {direction} signal - TDI: {tdi_result.get('tdi_level', 50):.1f} → Target: 50")
+        exit_target = self.BUY_EXIT_TARGET if direction == "BUY" else self.SELL_EXIT_TARGET
+        logger.info(f"✅ {symbol}: {direction} signal - TDI: {tdi_result.get('tdi_level', 50):.1f} → Target: {exit_target}")
         return signal_data
 
     def _determine_direction(self, tdi_data: Dict, bb_data: Dict, macd_data: Dict) -> str:
         """
-        Determine direction based on YOUR strategy.
+        Determine direction based on YOUR actual strategy.
 
         YOUR STRATEGY:
-        - BUY: TDI below 50 + Green above Red → Trade to 50
-        - SELL: TDI above 50 + Green below Red → Trade down to 50
+        - BUY: TDI below 50 + Green above Red → Trade to 70
+        - SELL: TDI above 50 + Green below Red → Trade down to 30
         """
         tdi_level = tdi_data.get('tdi_level', 50)
-        tdi_zone = tdi_data.get('tdi_zone', '')
         green_above_red = tdi_data.get('green_above_red', False)
 
         # BUY: TDI below center line (50) with bullish cross
@@ -161,12 +170,6 @@ class SignalEngine:
     def _check_conditions(self, tdi_data: Dict, bb_data: Dict, macd_data: Dict, direction: str) -> Tuple[bool, str, int]:
         """
         Check conditions based on YOUR strategy.
-
-        YOUR STRATEGY:
-        1. TDI in buyer/seller zone (REQUIRED)
-        2. Green above/below Red (REQUIRED)
-        3. MACD confirmation (SECONDARY - preferred)
-        4. BB confirmation (LAST - optional)
         """
         conditions_met = 0
         reasons = []
@@ -189,12 +192,12 @@ class SignalEngine:
             else:
                 return False, "Green not above Red", 0
 
-            # Condition 3: MACD (SECONDARY - preferred)
+            # Condition 3: MACD (SECONDARY)
             if macd_data and macd_data.get('bullish', False):
                 conditions_met += 1
                 reasons.append("MACD bullish ✅")
 
-            # Condition 4: BB (CONFIRMATION - optional)
+            # Condition 4: BB (CONFIRMATION)
             if bb_data.get('touch_lower', False) or bb_data.get('position', 0.5) < 0.35:
                 conditions_met += 1
                 reasons.append("BB near lower ✅")
@@ -216,12 +219,12 @@ class SignalEngine:
             else:
                 return False, "Green not below Red", 0
 
-            # Condition 3: MACD (SECONDARY - preferred)
+            # Condition 3: MACD (SECONDARY)
             if macd_data and macd_data.get('bearish', False):
                 conditions_met += 1
                 reasons.append("MACD bearish ✅")
 
-            # Condition 4: BB (CONFIRMATION - optional)
+            # Condition 4: BB (CONFIRMATION)
             if bb_data.get('touch_upper', False) or bb_data.get('position', 0.5) > 0.65:
                 conditions_met += 1
                 reasons.append("BB near upper ✅")
@@ -229,7 +232,6 @@ class SignalEngine:
                 reasons.append("BB waiting (optional)")
 
         # Minimum 2 conditions (TDI zone + cross) = valid signal
-        # More conditions = better signal
         return True, " | ".join(reasons), conditions_met
 
     def _check_macd(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
@@ -262,7 +264,7 @@ class SignalEngine:
 
     def _generate_buy_signal(self, symbol: str, df: pd.DataFrame,
                              tdi_data: Dict, bb_data: Dict, macd_data: Dict) -> Dict[str, Any]:
-        """Generate BUY signal - Trade from green line to 50."""
+        """Generate BUY signal - Enter below 50 → Exit at 70."""
         last = df.iloc[-1]
         current_price = last.get('close', 0)
         atr = self._calculate_atr(df)
@@ -270,8 +272,8 @@ class SignalEngine:
         # Entry TDI level
         entry_tdi = tdi_data.get('tdi_level', 50)
 
-        # Target is TDI 50 line
-        target_tdi = self.tdi_center_line
+        # YOUR Target is TDI 70 (Soft Sell zone)
+        target_tdi = self.BUY_EXIT_TARGET  # 70.0
 
         # Calculate SL/TP based on ATR
         stop_loss = current_price - (1.5 * atr) if atr > 0 else current_price * 0.985
@@ -315,10 +317,10 @@ class SignalEngine:
             'macd_bullish': macd_data.get('bullish', False) if macd_data else False,
             'macd_histogram': macd_data.get('histogram', 0) if macd_data else 0,
             'macd_above_signal': macd_data.get('above_signal', False) if macd_data else False,
-            # Strategy specific
+            # YOUR strategy specific
             'entry_tdi': entry_tdi,
             'target_tdi': target_tdi,
-            'strategy_type': 'REVERSAL_TO_50',
+            'strategy_type': 'BUY_TO_70',
             # Conditions
             'conditions_met': 0,
             'conditions_total': 4,
@@ -334,15 +336,13 @@ class SignalEngine:
             'ai_confidence': 0.0,
             'ai_analysis': {},
             # Exit tracking
-            'tdi_50_reached': False,
-            'tdi_50_rejected': False,
-            'tdi_50_broken': False,
+            'tdi_target_reached': False,
             'max_hold_minutes': 60,
         }
 
     def _generate_sell_signal(self, symbol: str, df: pd.DataFrame,
                               tdi_data: Dict, bb_data: Dict, macd_data: Dict) -> Dict[str, Any]:
-        """Generate SELL signal - Trade from red line down to 50."""
+        """Generate SELL signal - Enter above 50 → Exit at 30."""
         last = df.iloc[-1]
         current_price = last.get('close', 0)
         atr = self._calculate_atr(df)
@@ -350,8 +350,8 @@ class SignalEngine:
         # Entry TDI level
         entry_tdi = tdi_data.get('tdi_level', 50)
 
-        # Target is TDI 50 line
-        target_tdi = self.tdi_center_line
+        # YOUR Target is TDI 30 (Soft Buy zone)
+        target_tdi = self.SELL_EXIT_TARGET  # 30.0
 
         # Calculate SL/TP based on ATR
         stop_loss = current_price + (1.5 * atr) if atr > 0 else current_price * 1.015
@@ -395,10 +395,10 @@ class SignalEngine:
             'macd_bearish': macd_data.get('bearish', False) if macd_data else False,
             'macd_histogram': macd_data.get('histogram', 0) if macd_data else 0,
             'macd_below_signal': not macd_data.get('above_signal', True) if macd_data else False,
-            # Strategy specific
+            # YOUR strategy specific
             'entry_tdi': entry_tdi,
             'target_tdi': target_tdi,
-            'strategy_type': 'REVERSAL_TO_50',
+            'strategy_type': 'SELL_TO_30',
             # Conditions
             'conditions_met': 0,
             'conditions_total': 4,
@@ -414,26 +414,24 @@ class SignalEngine:
             'ai_confidence': 0.0,
             'ai_analysis': {},
             # Exit tracking
-            'tdi_50_reached': False,
-            'tdi_50_rejected': False,
-            'tdi_50_broken': False,
+            'tdi_target_reached': False,
             'max_hold_minutes': 60,
         }
 
     def _calculate_quality_score(self, tdi_data: Dict, bb_data: Dict, macd_data: Dict, direction: str) -> int:
-        """Calculate quality score based on YOUR strategy."""
+        """Calculate quality score."""
         score = 50  # Base score
 
         # TDI zone bonus
         zone = tdi_data.get('tdi_zone', '')
         if zone in ['OVERSOLD', 'OVERBOUGHT']:
-            score += 20  # Hard signal
+            score += 20
         elif zone in ['SOFT_BUY', 'SOFT_SELL']:
             score += 15
         elif zone in ['BUY_ZONE', 'SELL_ZONE']:
             score += 10
 
-        # Green/Red cross bonus
+        # Cross bonus
         if tdi_data.get('bullish_cross', False) or tdi_data.get('bearish_cross', False):
             score += 15
 
@@ -451,7 +449,6 @@ class SignalEngine:
         return min(100, max(0, score))
 
     def _get_grade(self, score: int) -> str:
-        """Get grade based on score."""
         if score >= 90:
             return "A+"
         elif score >= 80:
@@ -466,7 +463,7 @@ class SignalEngine:
             return "D"
 
     def _generate_cheat_sheet(self, signal_data: Dict[str, Any]) -> str:
-        """Generate cheat sheet aligned with YOUR strategy."""
+        """Generate cheat sheet for YOUR strategy."""
         direction = signal_data.get('direction', 'UNKNOWN')
         symbol = signal_data.get('symbol', 'UNKNOWN')
         tdi_level = signal_data.get('tdi_level', 50)
@@ -474,34 +471,34 @@ class SignalEngine:
 
         lines = []
         lines.append(f"{'🟢' if direction == 'BUY' else '🔴'} <b>{direction} SIGNAL</b> - {symbol}")
-        lines.append("📋 <b>Strategy: Trade to 50 Line</b>")
+        lines.append("📋 <b>Strategy: Trade Across the Range</b>")
         lines.append("")
 
         if direction == 'BUY':
-            lines.append(f"📊 TDI Entry: <b>{tdi_level:.1f}</b> (below 50)")
-            lines.append(f"🎯 Target: <b>TDI 50 line</b>")
+            lines.append(f"📊 TDI Entry: <b>{tdi_level:.1f}</b> (below 50 - Buyer Zone)")
+            lines.append(f"🎯 Exit Target: <b>TDI {target_tdi:.1f}</b> (Soft Sell Zone)")
+            lines.append(f"📈 Trade: {tdi_level:.1f} → {target_tdi:.1f}")
             lines.append(f"✅ Green line crossed ABOVE Red (Bulls taking over)")
             lines.append(f"📈 MACD: {'✅ BULLISH' if signal_data.get('macd_bullish', False) else '⏳ NEUTRAL'}")
             lines.append(f"📊 BB: {'✅ Near lower band' if signal_data.get('touch_lower', False) or signal_data.get('bb_position', 0.5) < 0.35 else '⏳ Waiting'}")
             lines.append("")
             lines.append("⏰ <b>Exit Rules:</b>")
-            lines.append("• Exit when TDI hits 50 and rejects")
-            lines.append("• Hold longer if TDI breaks above 50 (continuation)")
+            lines.append(f"• Exit when TDI reaches <b>{target_tdi:.1f}</b> (Soft Sell zone)")
             lines.append("• Max hold: 60 minutes")
 
         else:  # SELL
-            lines.append(f"📊 TDI Entry: <b>{tdi_level:.1f}</b> (above 50)")
-            lines.append(f"🎯 Target: <b>TDI 50 line</b>")
+            lines.append(f"📊 TDI Entry: <b>{tdi_level:.1f}</b> (above 50 - Seller Zone)")
+            lines.append(f"🎯 Exit Target: <b>TDI {target_tdi:.1f}</b> (Soft Buy Zone)")
+            lines.append(f"📉 Trade: {tdi_level:.1f} → {target_tdi:.1f}")
             lines.append(f"✅ Green line crossed BELOW Red (Bears taking over)")
             lines.append(f"📉 MACD: {'✅ BEARISH' if signal_data.get('macd_bearish', False) else '⏳ NEUTRAL'}")
             lines.append(f"📊 BB: {'✅ Near upper band' if signal_data.get('touch_upper', False) or signal_data.get('bb_position', 0.5) > 0.65 else '⏳ Waiting'}")
             lines.append("")
             lines.append("⏰ <b>Exit Rules:</b>")
-            lines.append("• Exit when TDI hits 50 and rejects")
-            lines.append("• Hold longer if TDI breaks below 50 (continuation)")
+            lines.append(f"• Exit when TDI reaches <b>{target_tdi:.1f}</b> (Soft Buy zone)")
             lines.append("• Max hold: 60 minutes")
 
-        # Add trade details
+        # Trade details
         lines.append("")
         lines.append("📊 <b>Trade Details</b>")
         lines.append(f"• Entry: ${signal_data.get('entry_price', 0):.4f}")
@@ -582,8 +579,10 @@ class SignalEngine:
     def get_stats(self) -> Dict[str, Any]:
         """Get engine statistics."""
         return {
-            'version': '3.4.1',
-            'strategy': 'Trade to 50 Line',
+            'version': '3.4.4',
+            'strategy': 'Trade Across the Range',
+            'buy_exit_target': self.BUY_EXIT_TARGET,
+            'sell_exit_target': self.SELL_EXIT_TARGET,
             'use_ai': self.use_ai,
             'min_rrr': self.min_rrr,
             'default_rrr': self.default_rrr,
