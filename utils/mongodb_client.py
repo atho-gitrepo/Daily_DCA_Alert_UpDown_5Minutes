@@ -1,6 +1,6 @@
 """
 MongoDB Client for Trading Bot - Super TDI + MACD + Super BB Strategy
-Version: 3.4.1 - FIXED: numpy bool serialization issue
+Version: 3.4.4 - FIXED: Database object truth value testing error
 """
 
 import os
@@ -79,7 +79,7 @@ class MongoDBClient:
 
         # Load config
         self.uri = self._get_uri()
-        self.db_name = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "trading_bot_dca"))
+        self.db_name = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "trading_bot"))
         self.active_collection = os.getenv("MONGODB_ACTIVE_COLLECTION", "active_signals")
         self.resolved_collection = os.getenv("MONGODB_RESOLVED_COLLECTION", "resolved_signals")
         self.archive_collection = os.getenv("MONGODB_ARCHIVE_COLLECTION", "archive_signals")
@@ -162,18 +162,17 @@ class MongoDBClient:
 
     def _create_indexes(self):
         """Create indexes for collections."""
-        if not self._connected or not self.db:
+        # FIXED: Check if db exists using 'is not None' instead of truth value
+        if not self._connected or self.db is None:
             return
 
         try:
-            # Active signals indexes
             active_col = self.db[self.active_collection]
             active_col.create_index("symbol", unique=True)
             active_col.create_index("entry_time")
             active_col.create_index("status")
             active_col.create_index([("symbol", 1), ("status", 1)])
 
-            # Resolved signals indexes
             resolved_col = self.db[self.resolved_collection]
             resolved_col.create_index("symbol")
             resolved_col.create_index("exit_time")
@@ -187,7 +186,7 @@ class MongoDBClient:
 
     def is_available(self) -> bool:
         """Check if MongoDB is available."""
-        return self._connected and self.enabled
+        return self._connected and self.enabled and self.client is not None
 
     def save_signal(self, signal_data: Dict[str, Any]) -> Optional[str]:
         """
@@ -393,6 +392,7 @@ class MongoDBClient:
                 self.client.close()
                 self._connected = False
                 self.enabled = False
+                self.db = None
                 logger.info(f"{EMOJI['SUCCESS']} MONGODB: Connection closed")
             except Exception as e:
                 logger.warning(f"{EMOJI['WARNING']} MONGODB: Cleanup error: {e}")
