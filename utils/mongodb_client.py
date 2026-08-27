@@ -79,7 +79,7 @@ class MongoDBClient:
 
         # Load config
         self.uri = self._get_uri()
-        self.db_name = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "trading_bot"))
+        self.db_name = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "trading_bot_dca"))
         self.active_collection = os.getenv("MONGODB_ACTIVE_COLLECTION", "active_signals")
         self.resolved_collection = os.getenv("MONGODB_RESOLVED_COLLECTION", "resolved_signals")
         self.archive_collection = os.getenv("MONGODB_ARCHIVE_COLLECTION", "archive_signals")
