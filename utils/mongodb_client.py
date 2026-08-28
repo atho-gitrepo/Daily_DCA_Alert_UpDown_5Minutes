@@ -1,6 +1,6 @@
 """
 MongoDB Client for Trading Bot - Super TDI + MACD + Super BB Strategy
-Version: 3.4.4 - FIXED: Database object truth value testing error
+Version: 3.4.1 - FIXED: Database object truth value testing error
 """
 
 import os
