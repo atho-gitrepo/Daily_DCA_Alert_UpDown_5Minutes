@@ -44,6 +44,7 @@ from utils.telegram_bot import telegram_bot
 
 # Strategy - Super TDI + MACD + Super Bollinger Bands
 from strategy.signal_engine import SignalEngine
+from strategy.prediction_engine import PredictionEngine
 from strategy.ai_analyzer import ai_analyzer
 from strategy.cheat_sheet import SignalCheatSheet
 from utils.logger import get_logger
@@ -54,6 +55,9 @@ from utils.logger import get_logger
 os.makedirs('logs', exist_ok=True)
 
 logger = get_logger(__name__)
+
+signal_engine = SignalEngine(use_ai=ai_analyzer.enabled if ai_analyzer else False)
+prediction_engine = PredictionEngine(config.strategy)
 
 # Emoji indicators
 EMOJI = {
@@ -77,6 +81,7 @@ bot_stats = {
     'status': 'initializing',
     'start_time': datetime.now().isoformat(),
     'signals_generated': 0,
+    'predictions': {'total': 0, 'up': 0, 'down': 0, 'neutral': 0, 'avg_confidence': 0.0},
     'ai_approved': 0,
     'ai_rejected': 0,
     'ai_waited': 0,
@@ -206,7 +211,7 @@ def check_conditions(signal_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_timeframe_stack() -> Dict[str, str]:
-    """Return the configured LTF/check/HTF stack used by the bot."""
+    """Return the configured 1m entry, 5m prediction, and 30m context stack."""
     return {
         'ltf': getattr(config.market, 'ltf_timeframe', '1m') or '1m',
         'check': getattr(config.market, 'timeframe', '5m') or '5m',
@@ -236,20 +241,49 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
             else:
                 return None
 
-        # Fetch HTF data (1h) for CONTEXT only (NOT a filter)
+        # Fetch context data for directional context only (NOT a hard filter)
         htf_df = fetch_data(symbol, timeframe_stack['htf'])
         if htf_df is None:
             logger.debug(f"{symbol}: No HTF data available, continuing without context")
             htf_df = None
 
-        # Create signal engine (use AI if enabled)
-        signal_engine = SignalEngine(use_ai=ai_analyzer.enabled if ai_analyzer else False)
+        prediction = prediction_engine.predict(
+            check_df,
+            ltf_df,
+            htf_df,
+            symbol=symbol,
+        )
+        bot_stats['predictions']['total'] += 1
+        bot_stats['predictions'][prediction.prediction.lower()] += 1
+        previous_total = bot_stats['predictions']['total'] - 1
+        previous_average = bot_stats['predictions']['avg_confidence']
+        bot_stats['predictions']['avg_confidence'] = (
+            previous_average * previous_total + prediction.confidence
+        ) / bot_stats['predictions']['total']
+
+        if prediction.prediction == 'NEUTRAL' or prediction.confidence < 55:
+            logger.debug(
+                f"{symbol}: No 5m prediction ({prediction.prediction}, "
+                f"{prediction.confidence:.1f}%)"
+            )
+            return None
 
         # Main evaluation uses the check timeframe (5m) while 1m LTF confirms entries and 1h HTF provides context.
         signal = signal_engine.process(check_df, symbol, htf_df=htf_df, ltf_df=ltf_df)
 
         if signal is None or signal.get('signal') == 'NO_TRADE':
             return None
+
+        if signal.get('direction') != ('BUY' if prediction.prediction == 'UP' else 'SELL'):
+            logger.debug(f"{symbol}: Entry engine disagrees with 5m prediction; skipping signal")
+            return None
+
+        signal['prediction'] = prediction.prediction
+        signal['prediction_confidence'] = prediction.confidence
+        signal['bullish_score'] = prediction.bullish_score
+        signal['bearish_score'] = prediction.bearish_score
+        signal['volume_ratio'] = prediction.volume_ratio
+        signal['htf_trend'] = prediction.htf_trend
 
         # Get current price
         current_price = data_client.fetch_current_price(symbol)
@@ -304,12 +338,12 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                                 entry_price=signal.get('entry_price', 0),
                                 stop_loss=signal.get('stop_loss', 0),
                                 take_profit=signal.get('take_profit', 0),
-                                confidence=signal.get('confidence', 0.7),
+                                confidence=prediction.confidence / 100,
                                 ai_decision=ai_decision,
                                 ai_confidence=signal.get('ai_confidence', 0.8),
                                 ai_reasoning=signal.get('ai_reasoning', ''),
                                 rrr=signal.get('rrr', 2.0),
-                                total_score=signal.get('quality_score', 75),
+                                total_score=int(prediction.confidence),
                                 grade=signal.get('grade', 'B'),
                                 signal_strength=signal.get('signal_strength', 'SOFT'),
                                 risk_multiplier=signal.get('risk_multiplier', 1.0),

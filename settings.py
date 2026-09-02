@@ -88,12 +88,16 @@ class BinanceConfig:
 @dataclass
 class MarketConfig:
     quote_asset: str = "USDT"
-    symbols: List[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
-    timeframe: str = "5m"  # Super TDI + MACD + Super BB uses 5m for entries
-    htf_timeframe: str = "1h"  # Higher timeframe for context ONLY (not a filter)
-    ltf_timeframe: str = "1m"  # Ultra LTF for precise entry
+    symbols: List[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "BNBUSDT"])
+    prediction_timeframe: str = "5m"
+    entry_timeframe: str = "1m"
+    context_timeframe: str = "30m"
+    timeframe: str = "5m"  # Legacy alias for prediction timeframe
+    htf_timeframe: str = "30m"  # Legacy alias for context timeframe
+    ltf_timeframe: str = "1m"  # Legacy alias for entry timeframe
     ultra_ltf_timeframe: str = "1m"
     ultra_htf_timeframe: str = "4h"
+    prediction_lookback_bars: int = 50
     polling_interval_seconds: int = 15  # 15 seconds for faster signal capture
 
 
@@ -106,9 +110,9 @@ class StrategyConfig:
 
     # ===== TDI Levels (Super TDI = Your RSI) =====
     tdi_oversold: float = 25.0      # Hard Buy Zone - 2x risk
-    tdi_soft_buy: float = 35.0      # Soft Buy Zone - 1x risk
+    tdi_soft_buy: float = 32.0      # Soft Buy Zone - 1x risk
     tdi_center_line: float = 50.0   # No Trade Zone - Wait!
-    tdi_soft_sell: float = 65.0     # Soft Sell Zone - 1x risk
+    tdi_soft_sell: float = 68.0     # Soft Sell Zone - 1x risk
     tdi_overbought: float = 75.0    # Hard Sell Zone - 2x risk
     tdi_no_trade_start: float = 50.0
     tdi_no_trade_end: float = 65.0
@@ -117,14 +121,14 @@ class StrategyConfig:
     tdi_slow_ma_period: int = 5
 
     # ===== MACD Settings (NEW - Your Secondary Indicator) =====
-    macd_fast: int = 12
-    macd_slow: int = 26
-    macd_signal: int = 9
+    macd_fast: int = 5
+    macd_slow: int = 13
+    macd_signal: int = 5
     require_macd_confirmation: bool = True  # MACD confirmation required
 
     # ===== Bollinger Bands (Super BB) =====
-    bb_period: int = 34
-    bb_deviation: float = 1.750
+    bb_period: int = 20
+    bb_deviation: float = 2.0
     bb_trend_period: int = 9
 
     # ===== Strategy Conditions =====
@@ -144,9 +148,9 @@ class StrategyConfig:
     weak_signal_risk_multiplier: float = 0.5
 
     # ===== ATR Risk =====
-    atr_period: int = 14
-    sl_multiplier: float = 1.5
-    tp_multiplier: float = 2.5  # Default RRR for Super BB strategy
+    atr_period: int = 10
+    sl_multiplier: float = 1.2
+    tp_multiplier: float = 2.0
 
     # ===== Entry Protection =====
     max_entry_distance_atr: float = 0.25
@@ -159,9 +163,9 @@ class StrategyConfig:
     grade_c_threshold: int = 50      # Changed from 60
 
     # ===== Signal Lifecycle =====
-    symbol_cooldown_minutes: int = 30
-    break_even_threshold_minutes: int = 480  # 8 hours
-    min_bars_before_check: int = 2
+    symbol_cooldown_minutes: int = 15
+    break_even_threshold_minutes: int = 30
+    min_bars_before_check: int = 1
 
     # ===== Features =====
     enable_divergence: bool = True
@@ -180,16 +184,16 @@ class StrategyConfig:
     ltf_min_confirmation: float = 0.65
 
     # ===== Risk =====
-    default_rrr: float = 2.0
-    min_rrr: float = 1.5
-    max_rrr: float = 4.0
+    default_rrr: float = 1.8
+    min_rrr: float = 1.2
+    max_rrr: float = 3.0
     risk_per_trade_percent: float = 0.5
     max_daily_trades: int = 5
 
     # ===== AI =====
     ai_enabled: bool = True
-    ai_min_interval_seconds: int = 120
-    ai_cache_ttl: int = 600
+    ai_min_interval_seconds: int = 60
+    ai_cache_ttl: int = 300
 
     # ===== Fee =====
     fee_impact: float = 0.0011
@@ -197,7 +201,7 @@ class StrategyConfig:
     # ===== Signal Settings =====
     min_quality_score: int = 50      # Changed from 70
     min_signal_score: int = 60       # Changed from 70
-    signal_cooldown_minutes: int = 30
+    signal_cooldown_minutes: int = 15
     max_signals_per_cycle: int = 5
 
     # ===== Leverage =====
@@ -365,14 +369,19 @@ class Config:
 
         # ====== MARKET ======
         default_symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "AVAXUSDT", "DOTUSDT", "ADAUSDT", "MATICUSDT"]
+        prediction_timeframe = os.getenv("PREDICTION_TIMEFRAME", "5m")
+        entry_timeframe = os.getenv("ENTRY_TIMEFRAME", "1m")
+        context_timeframe = os.getenv("CONTEXT_TIMEFRAME", "30m")
         self.market = MarketConfig(
             quote_asset=os.getenv("QUOTE_ASSET", "USDT"),
             symbols=safe_list_env("SYMBOLS", default_symbols),
-            timeframe=os.getenv("TIMEFRAME", "5m"),
-            htf_timeframe=os.getenv("HTF_TIMEFRAME", "1h"),
-            ltf_timeframe=os.getenv("LTF_TIMEFRAME", "1m"),
-            ultra_ltf_timeframe=os.getenv("ULTRA_LTF_TIMEFRAME", "1m"),
-            ultra_htf_timeframe=os.getenv("ULTRA_HTF_TIMEFRAME", "4h"),
+            prediction_timeframe=prediction_timeframe,
+            entry_timeframe=entry_timeframe,
+            context_timeframe=context_timeframe,
+            timeframe=os.getenv("TIMEFRAME", prediction_timeframe),
+            htf_timeframe=os.getenv("HTF_TIMEFRAME", context_timeframe),
+            ltf_timeframe=os.getenv("LTF_TIMEFRAME", entry_timeframe),
+            prediction_lookback_bars=safe_int_env("PREDICTION_LOOKBACK_BARS", 50, min_val=20, max_val=200),
             polling_interval_seconds=safe_int_env("POLLING_INTERVAL_SECONDS", 15, min_val=5, max_val=60),
         )
 
@@ -383,9 +392,9 @@ class Config:
         self.strategy = StrategyConfig(
             # TDI Levels
             tdi_oversold=safe_float_env("TDI_OVERSOLD", 25.0, min_val=15, max_val=35),
-            tdi_soft_buy=safe_float_env("TDI_SOFT_BUY", 35.0, min_val=25, max_val=45),
+            tdi_soft_buy=safe_float_env("TDI_SOFT_BUY", 32.0, min_val=25, max_val=40),
             tdi_center_line=safe_float_env("TDI_CENTER_LINE", 50.0, min_val=45, max_val=55),
-            tdi_soft_sell=safe_float_env("TDI_SOFT_SELL", 65.0, min_val=55, max_val=75),
+            tdi_soft_sell=safe_float_env("TDI_SOFT_SELL", 68.0, min_val=60, max_val=75),
             tdi_overbought=safe_float_env("TDI_OVERBOUGHT", 75.0, min_val=65, max_val=85),
             tdi_no_trade_start=safe_float_env("TDI_NO_TRADE_START", 50.0, min_val=45, max_val=55),
             tdi_no_trade_end=safe_float_env("TDI_NO_TRADE_END", 65.0, min_val=55, max_val=75),
@@ -394,14 +403,14 @@ class Config:
             tdi_slow_ma_period=safe_int_env("TDI_SLOW_MA_PERIOD", 5, min_val=3, max_val=10),
 
             # MACD Settings (NEW)
-            macd_fast=safe_int_env("MACD_FAST", 12, min_val=5, max_val=20),
-            macd_slow=safe_int_env("MACD_SLOW", 26, min_val=15, max_val=40),
-            macd_signal=safe_int_env("MACD_SIGNAL", 9, min_val=5, max_val=15),
+            macd_fast=safe_int_env("MACD_FAST", 5, min_val=3, max_val=10),
+            macd_slow=safe_int_env("MACD_SLOW", 13, min_val=8, max_val=21),
+            macd_signal=safe_int_env("MACD_SIGNAL", 5, min_val=3, max_val=9),
             require_macd_confirmation=safe_bool_env("REQUIRE_MACD_CONFIRMATION", True),
 
             # Bollinger Bands
-            bb_period=safe_int_env("BB_PERIOD", 34, min_val=10, max_val=50),
-            bb_deviation=safe_float_env("BB_DEVIATION", 1.750, min_val=1.0, max_val=3.0),
+            bb_period=safe_int_env("BB_PERIOD", 20, min_val=10, max_val=30),
+            bb_deviation=safe_float_env("BB_DEVIATION", 2.0, min_val=1.5, max_val=2.5),
             bb_trend_period=safe_int_env("BB_TREND_PERIOD", 9, min_val=3, max_val=20),
 
             # Strategy Conditions
@@ -419,9 +428,9 @@ class Config:
             weak_signal_risk_multiplier=safe_float_env("WEAK_SIGNAL_RISK_MULTIPLIER", 0.5, min_val=0.1, max_val=1.0),
 
             # ATR Risk
-            atr_period=safe_int_env("ATR_PERIOD", 14, min_val=5, max_val=30),
-            sl_multiplier=safe_float_env("SL_MULTIPLIER", 1.5, min_val=0.5, max_val=3.0),
-            tp_multiplier=safe_float_env("TP_MULTIPLIER", 2.5, min_val=1.0, max_val=5.0),
+            atr_period=safe_int_env("ATR_PERIOD", 10, min_val=5, max_val=20),
+            sl_multiplier=safe_float_env("SL_MULTIPLIER", 1.2, min_val=0.5, max_val=2.0),
+            tp_multiplier=safe_float_env("TP_MULTIPLIER", 2.0, min_val=1.0, max_val=3.0),
 
             # Entry Protection
             max_entry_distance_atr=safe_float_env("MAX_ENTRY_DISTANCE_ATR", 0.25, min_val=0.05, max_val=0.75),
@@ -434,9 +443,9 @@ class Config:
             grade_c_threshold=safe_int_env("GRADE_C_THRESHOLD", 50, min_val=40, max_val=70),
 
             # Signal Lifecycle
-            symbol_cooldown_minutes=safe_int_env("SYMBOL_COOLDOWN_MINUTES", 30, min_val=5, max_val=120),
-            break_even_threshold_minutes=safe_int_env("BREAK_EVEN_THRESHOLD_MINUTES", 480, min_val=30, max_val=720),
-            min_bars_before_check=safe_int_env("MIN_BARS_BEFORE_CHECK", 2, min_val=1, max_val=5),
+            symbol_cooldown_minutes=safe_int_env("SYMBOL_COOLDOWN_MINUTES", 15, min_val=5, max_val=30),
+            break_even_threshold_minutes=safe_int_env("BREAK_EVEN_THRESHOLD_MINUTES", 30, min_val=10, max_val=60),
+            min_bars_before_check=safe_int_env("MIN_BARS_BEFORE_CHECK", 1, min_val=1, max_val=3),
 
             # Features
             enable_divergence=safe_bool_env("ENABLE_DIVERGENCE", True),
