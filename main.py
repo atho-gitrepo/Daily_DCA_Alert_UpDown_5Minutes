@@ -226,13 +226,18 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
         if signal_manager.is_symbol_locked(symbol):
             return None
 
-        # Fetch LTF data (5m) - includes MACD now
-        df = fetch_data(symbol, config.market.timeframe)
-        if df is None:
-            return None
+        timeframe_stack = get_timeframe_stack()
+        ltf_df = fetch_data(symbol, timeframe_stack['ltf'])
+        check_df = fetch_data(symbol, timeframe_stack['check'])
+
+        if check_df is None:
+            if ltf_df is not None:
+                check_df = ltf_df
+            else:
+                return None
 
         # Fetch HTF data (1h) for CONTEXT only (NOT a filter)
-        htf_df = fetch_data(symbol, config.market.htf_timeframe)
+        htf_df = fetch_data(symbol, timeframe_stack['htf'])
         if htf_df is None:
             logger.debug(f"{symbol}: No HTF data available, continuing without context")
             htf_df = None
@@ -240,7 +245,7 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
         # Create signal engine (use AI if enabled)
         signal_engine = SignalEngine(use_ai=ai_analyzer.enabled if ai_analyzer else False)
 
-        # Main evaluation uses the check timeframe (default 5m) while LTF 1m confirms entries and HTF 1h provides context.
+        # Main evaluation uses the check timeframe (5m) while 1m LTF confirms entries and 1h HTF provides context.
         signal = signal_engine.process(check_df, symbol, htf_df=htf_df, ltf_df=ltf_df)
 
         if signal is None or signal.get('signal') == 'NO_TRADE':
@@ -250,8 +255,8 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
         current_price = data_client.fetch_current_price(symbol)
         if current_price:
             signal['entry_price'] = current_price
-        elif not df.empty:
-            signal['entry_price'] = df['close'].iloc[-1]
+        elif not check_df.empty:
+            signal['entry_price'] = check_df['close'].iloc[-1]
 
         # Check conditions
         condition_check = check_conditions(signal)
