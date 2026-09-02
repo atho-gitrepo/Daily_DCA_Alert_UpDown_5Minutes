@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trading-bot
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-bot-config
+  namespace: trading-bot
+data:
+  ENVIRONMENT: development
+  RUN_MODE: DEMO
+  BINANCE_USE_TESTNET: "true"
+  SYMBOLS: BTCUSDT
+  TIMEFRAME: 5m
+  HTF_TIMEFRAME: 1h
+  POLLING_INTERVAL_SECONDS: "30"
+  LOG_LEVEL: WARNING
+  AI_ENABLED: "false"
+  # Docker Desktop exposes services on the Windows host at this hostname.
+  MONGODB_URI: mongodb://host.docker.internal:27017/trading_bot_dca
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trading-bot
+  namespace: trading-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trading-bot
+  template:
+    metadata:
+      labels:
+        app: trading-bot
+    spec:
+      containers:
+        - name: trading-bot
+          # Build this exact tag locally before applying this manifest.
+          image: daily-signal-alert:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: trading-bot-config
+            # Create this optional secret only if enabling Telegram or Groq.
+            - secretRef:
+                name: trading-bot-secrets
+                optional: true
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trading-bot
+  namespace: trading-bot
+spec:
+  selector:
+    app: trading-bot
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+  type: ClusterIP

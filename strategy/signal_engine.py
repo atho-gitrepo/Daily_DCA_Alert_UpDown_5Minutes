@@ -74,9 +74,15 @@ class SignalEngine:
         logger.info(f"   🎯 SELL Exit Target: TDI {self.SELL_EXIT_TARGET}")
         logger.info(f"   Strategy: Enter at extremes → Exit at opposite extremes")
 
-    def process(self, df: pd.DataFrame, symbol: str = "UNKNOWN", htf_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+    def process(self, df: pd.DataFrame, symbol: str = "UNKNOWN", htf_df: Optional[pd.DataFrame] = None,
+                ltf_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
         """
         Process signal aligned with YOUR actual strategy.
+
+        Workflow:
+        - check timeframe = primary decision timeframe (default 5m)
+        - LTF = 1m confirmation timeframe for fast-reaction entries
+        - HTF = 1h context only, not a hard filter
         """
         if df is None or df.empty:
             return self._no_signal(symbol, "No data")
@@ -99,6 +105,16 @@ class SignalEngine:
 
         # ===== STEP 4: DETERMINE DIRECTION (YOUR STRATEGY) =====
         direction = self._determine_direction(tdi_result, bb_result, macd_result)
+
+        if ltf_df is not None and not ltf_df.empty:
+            ltf_tdi = self.tdi_detector.detect_opportunity(ltf_df)
+            ltf_bb = self.bb_detector.detect_bb_interaction(ltf_df)
+            ltf_macd = self._check_macd(ltf_df)
+            ltf_direction = self._determine_direction(ltf_tdi, ltf_bb, ltf_macd)
+
+            if ltf_direction != "NONE" and ltf_direction != direction:
+                logger.debug(f"📊 {symbol}: LTF {ltf_direction} disagrees with check timeframe {direction}; skipping signal")
+                return self._no_signal(symbol, f"LTF {ltf_direction} disagrees with check timeframe {direction}")
 
         if direction == "NONE":
             tdi_level = tdi_result.get('tdi_level', 50)

@@ -511,7 +511,7 @@ class Config:
             api_key=os.getenv("GROQ_API_KEY", ""),
             model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
             temperature=safe_float_env("GROQ_TEMPERATURE", 0.3, min_val=0, max_val=1.0),
-            enabled=bool(os.getenv("GROQ_API_KEY", "")),
+            enabled=safe_bool_env("AI_ENABLED", bool(os.getenv("GROQ_API_KEY", ""))),
         )
 
         # ====== TELEGRAM ======

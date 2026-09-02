@@ -1,0 +1,36 @@
+# Apply this only after creating the trading-bot-secrets secret from
+# production-secrets.env. It replaces the DEMO ConfigMap in trading-bot.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-bot-config
+  namespace: trading-bot
+data:
+  ENVIRONMENT: production
+  RUN_MODE: PRODUCTION
+  BINANCE_USE_TESTNET: "false"
+  SYMBOLS: BTCUSDT,ETHUSDT,BNBUSDT
+  QUOTE_ASSET: USDT
+  TIMEFRAME: 15m
+  HTF_TIMEFRAME: 1h
+  LTF_TIMEFRAME: 5m
+  POLLING_INTERVAL_SECONDS: "15"
+  BB_PERIOD: "34"
+  BB_DEVIATION: "1.750"
+  REQUIRE_HTF_ALIGNMENT: "false"
+  REQUIRE_LTF_CONFIRMATION: "true"
+  RISK_PER_TRADE_PERCENT: "2"
+  DEFAULT_LEVERAGE: "5"
+  MIN_LEVERAGE: "1"
+  MAX_LEVERAGE: "20"
+  USE_FUTURES: "true"
+  # AI is deliberately disabled. Omit GROQ_API_KEY from the production secret.
+  AI_ENABLED: "false"
+  DEBUG: "false"
+  LOG_LEVEL: INFO
+  # Local MongoDB was verified reachable from this Kubernetes cluster.
+  MONGODB_URI: mongodb://host.docker.internal:27017/trading_bot_dca
+  MONGODB_DB: trading_bot_dca
+  MONGODB_ACTIVE_COLLECTION: active_signals
+  MONGODB_RESOLVED_COLLECTION: resolved_signals
+  MONGODB_ARCHIVE_COLLECTION: archive_signals

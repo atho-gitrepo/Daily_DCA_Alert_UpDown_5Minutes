@@ -205,6 +205,15 @@ def check_conditions(signal_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def get_timeframe_stack() -> Dict[str, str]:
+    """Return the configured LTF/check/HTF stack used by the bot."""
+    return {
+        'ltf': getattr(config.market, 'ltf_timeframe', '1m') or '1m',
+        'check': getattr(config.market, 'timeframe', '5m') or '5m',
+        'htf': getattr(config.market, 'htf_timeframe', '1h') or '1h',
+    }
+
+
 def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
     """Process a single symbol using Super TDI + MACD + Super BB strategy."""
 
@@ -231,8 +240,8 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
         # Create signal engine (use AI if enabled)
         signal_engine = SignalEngine(use_ai=ai_analyzer.enabled if ai_analyzer else False)
 
-        # Process signal with HTF data (HTF is context only, NOT a filter)
-        signal = signal_engine.process(df, symbol, htf_df=htf_df)
+        # Main evaluation uses the check timeframe (default 5m) while LTF 1m confirms entries and HTF 1h provides context.
+        signal = signal_engine.process(check_df, symbol, htf_df=htf_df, ltf_df=ltf_df)
 
         if signal is None or signal.get('signal') == 'NO_TRADE':
             return None
@@ -402,11 +411,12 @@ def check_active_signals():
                 if telegram_bot is not None and telegram_bot.enabled:
                     try:
                         status_emoji = "💰" if status == "PROFIT" else "💸" if status == "LOSS" else "⚖️" if status == "BREAK_EVEN" else "⏰"
+                        result_score = getattr(updated, 'total_score', getattr(updated, 'quality_score', 0))
 
                         telegram_bot.send_result(
                             symbol=symbol,
-                            signal_type=signal.get('signal_type', 'UNKNOWN'),
-                            entry_price=signal.get('entry_price', 0),
+                            signal_type=getattr(signal, 'signal_type', 'UNKNOWN'),
+                            entry_price=getattr(signal, 'entry_price', 0),
                             exit_price=current_price,
                             pnl=updated.pnl,
                             pnl_percent=updated.pnl_percent,
@@ -418,7 +428,7 @@ def check_active_signals():
                             rrr=updated.rrr,
                             signal_strength=updated.signal_strength,
                             risk_multiplier=updated.risk_multiplier,
-                            total_score=updated.total_score,
+                            total_score=result_score,
                             grade=updated.grade,
                             conditions_met=getattr(updated, 'conditions_met', 0),
                             conditions_total=getattr(updated, 'conditions_total', 5),
@@ -519,7 +529,8 @@ def main():
     logger.info("  - Break-Even: At 1 hour")
     logger.info("=" * 70)
     logger.info(f"📈 Symbols: {config.market.symbols}")
-    logger.info(f"⏱️ Timeframe: {config.market.timeframe}")
+    logger.info(f"⏱️ LTF: {getattr(config.market, 'ltf_timeframe', '1m')}")
+    logger.info(f"📊 Check Timeframe: {config.market.timeframe}")
     logger.info(f"📋 HTF: {config.market.htf_timeframe} (Context Only)")
     logger.info(f"🎯 Run Mode: {config.deployment.run_mode.value if hasattr(config.deployment, 'run_mode') else 'UNKNOWN'}")
     min_conditions = getattr(config.strategy, 'min_conditions_for_signal', 3)
