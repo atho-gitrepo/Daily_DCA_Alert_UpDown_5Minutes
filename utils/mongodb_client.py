@@ -9,6 +9,7 @@ import time
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import json
+import pandas as pd
 
 try:
     from pymongo import MongoClient
@@ -168,21 +169,45 @@ class MongoDBClient:
 
         try:
             active_col = self.db[self.active_collection]
-            active_col.create_index("symbol", unique=True)
-            active_col.create_index("entry_time")
-            active_col.create_index("status")
-            active_col.create_index([("symbol", 1), ("status", 1)])
+            self._ensure_index(active_col, "symbol", {"unique": True})
+            self._ensure_index(active_col, "entry_time")
+            self._ensure_index(active_col, "status")
+            self._ensure_index(active_col, [("symbol", 1), ("status", 1)])
 
             resolved_col = self.db[self.resolved_collection]
-            resolved_col.create_index("symbol")
-            resolved_col.create_index("exit_time")
-            resolved_col.create_index("status")
-            resolved_col.create_index([("symbol", 1), ("exit_time", -1)])
+            self._ensure_index(resolved_col, "symbol")
+            self._ensure_index(resolved_col, "exit_time")
+            self._ensure_index(resolved_col, "status")
+            self._ensure_index(resolved_col, [("symbol", 1), ("exit_time", -1)])
 
             logger.debug(f"{EMOJI['SUCCESS']} MONGODB: Indexes created")
 
         except Exception as e:
             logger.warning(f"{EMOJI['WARNING']} MONGODB: Index creation failed: {e}")
+
+    @staticmethod
+    def _ensure_index(collection, keys, options=None):
+        """Create an index, replacing a conflicting legacy index definition."""
+        options = options or {}
+        index_name = options.get("name")
+        if index_name is None:
+            if isinstance(keys, str):
+                index_name = f"{keys}_1"
+            else:
+                index_name = "_".join(f"{key}_{direction}" for key, direction in keys)
+
+        indexes = collection.index_information()
+        existing = indexes.get(index_name)
+        if existing is not None:
+            existing_keys = list(existing.get("key", []))
+            requested_keys = [(keys, 1)] if isinstance(keys, str) else list(keys)
+            if existing_keys == requested_keys and all(
+                existing.get(option) == value for option, value in options.items()
+            ):
+                return index_name
+            collection.drop_index(index_name)
+
+        return collection.create_index(keys, name=index_name, **options)
 
     def is_available(self) -> bool:
         """Check if MongoDB is available."""
