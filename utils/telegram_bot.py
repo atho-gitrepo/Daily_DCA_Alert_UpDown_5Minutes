@@ -409,6 +409,10 @@ class TelegramBot:
             risk_multiplier = kwargs.get('risk_multiplier', 1.0)
             conditions_met = kwargs.get('conditions_met', 0)
             conditions_total = kwargs.get('conditions_total', 5)
+            prediction_window = kwargs.get('prediction_window', '5 minutes')
+            decision_timeframe = kwargs.get('decision_timeframe', '5m')
+            ltf_timeframe = kwargs.get('ltf_timeframe', '1m')
+            htf_timeframe = kwargs.get('htf_timeframe', '1h')
 
             # MACD fields
             macd_bullish = kwargs.get('macd_bullish', False)
@@ -455,36 +459,31 @@ class TelegramBot:
 
             # Signal emoji
             signal_emoji = "🟢" if signal_type == "BUY" else "🔴"
+            prediction = "UP" if signal_type == "BUY" else "DOWN"
+            prediction_emoji = "⬆️" if prediction == "UP" else "⬇️"
 
-            # Build message with cheat sheet as primary content
+            # Build the alert around the binary prediction users act on.
             message = f"""
-{signal_emoji} <b>{signal_type} SIGNAL</b> | <b>{symbol}</b> {grade_emoji}
+{prediction_emoji} <b>{prediction} ALERT</b> | <b>{symbol}</b> {grade_emoji}
+
+⏱️ <b>Prediction Window: {prediction_window}</b>
+📌 Decision: <b>{prediction}</b> on the <b>{decision_timeframe}</b> timeframe
+✅ Confirmation: <b>{ltf_timeframe}</b> lower-timeframe check
+📊 Context: <b>{htf_timeframe}</b> higher-timeframe context only
+
+🎯 <b>Signal: {signal_type}</b> | Confidence: <b>{confidence*100:.1f}%</b>
+📈 <b>Entry: <code>${entry_price:.6f}</code></b>
+🎯 Target: <code>${take_profit:.6f}</code> (+{tp_pct:.2f}%)
+🛑 Risk level: <code>${stop_loss:.6f}</code> (-{sl_pct:.2f}%)
+
+📋 <b>Strategy Confirmation</b>
+• TDI: <b>{tdi_level:.1f}</b> ({self._get_tdi_zone_emoji(tdi_level)})
+• MACD: <b>{macd_status}</b>
+• Conditions: <b>{conditions_met}/{conditions_total}</b>
+• Strength: <b>{'HARD' if signal_strength == 'HARD' else 'SOFT'}</b> ({risk_multiplier}x risk)
+• RRR: <b>{rrr:.1f}</b> | Score: <b>{total_score}</b>
 
 {cheat_sheet}
-
-📊 <b>Trade Parameters</b>
-• Entry: <code>${entry_price:.6f}</code>
-• SL: <code>${stop_loss:.6f}</code> (<b>-{sl_pct:.2f}%</b>)
-• TP: <code>${take_profit:.6f}</code> (<b>+{tp_pct:.2f}%</b>)
-• RRR: <b>{rrr:.1f}</b>
-• Confidence: <b>{confidence*100:.1f}%</b>
-• Strength: <b>{'🔴 HARD' if signal_strength == 'HARD' else '🟡 SOFT'}</b> ({risk_multiplier}x risk)
-
-📈 <b>TDI Analysis</b>
-• Level: <b>{tdi_level:.1f}</b>
-• Zone: <b>{self._get_tdi_zone_emoji(tdi_level)}</b>
-
-📊 <b>MACD Analysis</b>
-• Status: <b>{macd_status}</b>
-• Required: <b>{'✅' if macd_required else '❌'} {macd_required}</b>
-• Histogram: <b>{macd_histogram:.4f}</b>
-
-💰 <b>Fee Impact</b>
-• Entry Fee: <code>${entry_fee:.4f}</code>
-• Exit Fee: <code>${exit_fee:.4f}</code>
-• Total Fee: <code>${total_fee:.4f}</code> ({fee_pct:.2f}%)
-• <b>Net TP: +{net_tp_pct:.2f}%</b>
-• <b>Net SL: -{net_sl_pct:.2f}%</b>
 
 {self._format_features(kwargs)}
 

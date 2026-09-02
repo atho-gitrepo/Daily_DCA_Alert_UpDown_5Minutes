@@ -288,7 +288,7 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                 if signal_manager.lock_symbol(
                     symbol=symbol,
                     signal_type=signal.get('direction', 'UNKNOWN'),
-                    entry_price=signal.get('entry_price', df['close'].iloc[-1] if not df.empty else 0),
+                    entry_price=signal.get('entry_price', check_df['close'].iloc[-1] if not check_df.empty else 0),
                     raw_data=signal,
                 ):
                     bot_stats['signals_generated'] += 1
@@ -336,6 +336,11 @@ def process_symbol(symbol: str) -> Optional[Dict[str, Any]]:
                                 cheat_sheet=signal.get('cheat_sheet', ''),
                                 # Hold info
                                 max_hold_minutes=60,
+                                # Up/down alert context
+                                prediction_window='5 minutes',
+                                decision_timeframe=get_timeframe_stack()['check'],
+                                ltf_timeframe=get_timeframe_stack()['ltf'],
+                                htf_timeframe=get_timeframe_stack()['htf'],
                             )
                         except Exception as e:
                             logger.warning(f"Telegram error for {symbol}: {e}")
